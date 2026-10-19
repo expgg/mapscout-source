@@ -1,4 +1,4 @@
-# Python
+# Python & PyInstaller Build Artifacts
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,6 +7,9 @@ __pycache__/
 venv/
 env/
 ENV/
+build/
+dist/
+*.spec
 
 # Chrome & Automation
 chrome_profile/

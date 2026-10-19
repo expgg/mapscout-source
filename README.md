@@ -16,7 +16,7 @@
 
 ---
 
-[Quick Start](#-quick-start) • [Key Features](#-features) • [11-Column Architecture](#-11-column-lead-intelligence-architecture) • [Google Sheets Setup](docs/GOOGLE_SHEETS_SETUP.md) • [Architecture](docs/ARCHITECTURE.md) • [Sample Data](samples/sample_leads_intelligence.csv)
+[📦 Download .exe](#-download--releases-v25) • [Quick Start](#-quick-start-running-from-source) • [Key Features](#-features) • [11-Column Architecture](#-11-column-lead-intelligence-architecture) • [Google Sheets Setup](docs/GOOGLE_SHEETS_SETUP.md) • [Architecture](docs/ARCHITECTURE.md) • [Sample Data](samples/sample_leads_intelligence.csv)
 
 ---
 
@@ -36,7 +36,24 @@
 
 ---
 
-## ⚡ Quick Start
+## 📦 Download & Releases (v2.5)
+
+Run MapScout on your PC instantly with or without Python installed:
+
+| Package | Requirements | Best For | Direct Download |
+| :--- | :---: | :--- | :---: |
+| **⚡ 1-Click Standalone `.exe`** | **None** *(Zero Python Required)* | Instant double-click execution for Windows users | [**⬇️ Download MapScout.exe (v2.5)**](https://github.com/expgg/mapscout-source/releases/latest) |
+| **📦 Full Source Code (`.zip`)** | Python 3.10+ | Developers, Linux/macOS users & power customizers | [**⬇️ Download Source Code (.zip)**](https://github.com/expgg/mapscout-source/archive/refs/heads/main.zip) |
+
+### 🚀 Running the 1-Click `.exe` (No Python Required)
+1. Head over to [**Releases**](https://github.com/expgg/mapscout-source/releases/latest) and download `MapScout.exe`.
+2. Double-click `MapScout.exe` on any Windows PC.
+3. The interactive console HUD will launch immediately — no command line, virtual environment, or pip packages needed!
+4. Follow the on-screen prompts or press **Enter** to accept smart defaults and start harvesting.
+
+---
+
+## ⚡ Quick Start (Running from Source)
 
 ### 1. Clone the Repository
 ```bash

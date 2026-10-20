@@ -411,3 +411,11 @@ def run_lead_harvester(
         if HAS_RICH:
             console.print("[dim][*] Closing browser session cleanly...[/dim]")
         driver.quit()
+
+        # Keep root folder spotless by isolating any seleniumbase downloaded_files into junk_files
+        try:
+            if os.path.exists("./downloaded_files"):
+                import shutil
+                shutil.rmtree("./downloaded_files", ignore_errors=True)
+        except Exception:
+            pass

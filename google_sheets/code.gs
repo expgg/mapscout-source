@@ -202,14 +202,15 @@ function setupSheetLayout(sheet, topic) {
   // 3. KPI Badge 2: Emails Found % (Cols 5-6)
   sheet.getRange(1, 5, 1, 2).merge();
   const card2 = sheet.getRange(1, 5);
-  card2.setFormula('="✉️ EMAILS: " & TEXT(COUNTIF(C3:C, "<>NOT FOUND") / MAX(1, COUNTA(A3:A)), "0.0%")');
+  card2.setFormula('="✉️ EMAILS: " & TEXT(COUNTIFS(A3:A, "<>", C3:C, "<>", C3:C, "<>NOT FOUND") / MAX(1, COUNTA(A3:A)), "0.0%")');
   styleKpiBadge(card2, "#E6F4EA", "#137333", "#34A853");
 
   // 4. KPI Badge 3: Phones Verified % (Cols 7-8)
   sheet.getRange(1, 7, 1, 2).merge();
   const card3 = sheet.getRange(1, 7);
-  card3.setFormula('="📞 PHONES: " & TEXT(COUNTIF(D3:D, "<>NOT FOUND") / MAX(1, COUNTA(A3:A)), "0.0%")');
+  card3.setFormula('="📞 PHONES: " & TEXT(COUNTIFS(A3:A, "<>", D3:D, "<>", D3:D, "<>NOT FOUND") / MAX(1, COUNTA(A3:A)), "0.0%")');
   styleKpiBadge(card3, "#FEF7E0", "#B06000", "#FBBC04");
+
 
   // 5. KPI Badge 4: Top Rated % (Cols 9-11)
   sheet.getRange(1, 9, 1, 3).merge();

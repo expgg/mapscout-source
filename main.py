@@ -257,6 +257,12 @@ def is_valid_email(email: str) -> bool:
     return True
 
 
+def normalize_name(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r'[^a-zA-Z0-9]', '', str(s)).lower()
+
+
 def clean_phone_number(raw: str) -> str:
     if not raw:
         return ""
@@ -808,9 +814,15 @@ def run_lead_harvester(
     while "--" in safe_topic:
         safe_topic = safe_topic.replace("--", "-")
 
+    csv_dir = os.path.abspath("./scrapped_csv")
+    os.makedirs(csv_dir, exist_ok=True)
+
     if not output_path:
         count_suffix = "all" if is_all_mode else str(quota)
-        output_path = f"{safe_topic}-{count_suffix}-leads.csv"
+        output_path = os.path.join(csv_dir, f"{safe_topic}-{count_suffix}-leads.csv")
+    elif not os.path.isabs(output_path) and not os.path.dirname(output_path):
+        output_path = os.path.join(csv_dir, output_path)
+
 
     print_config_panel(niche, location, quota_display, sheet_url, output_path)
     check_webhook_status(sheet_url)
@@ -1012,24 +1024,52 @@ def run_lead_harvester(
             lead_index += 1
 
             try:
-                # Fast in-page click to load place authority details
-                card_idx = card_info["index"]
-                driver.execute_script(f"""
-                    let cards = document.querySelectorAll('div.Nv2PK');
-                    if (cards[{card_idx}]) {{
-                        let link = cards[{card_idx}].querySelector('a.hfpxzc') || cards[{card_idx}];
-                        link.click();
-                    }}
+                target_name = b_name
+                target_href = card_info.get("maps_url", "")
+                norm_target = normalize_name(target_name)
+
+                # 1. Anti-Scramble Safeguard: Purge old authority link and title before clicking so stale data can NEVER be read
+                driver.execute_script("""
+                    let auth = document.querySelector('a[data-item-id="authority"]');
+                    if (auth) auth.remove();
+                    let h1 = document.querySelector('h1.DUwDvf');
+                    if (h1) h1.innerText = '';
                 """)
 
-                # Synchronized polling (up to 0.6s) to ensure place details pane matches the current card
+                # 2. Click the exact card element matching target_href or target_name
+                driver.execute_script("""
+                    let targetHref = arguments[0];
+                    let targetName = arguments[1];
+                    let allCards = document.querySelectorAll('div.Nv2PK');
+                    let targetLink = null;
+                    for (let c of allCards) {
+                        let l = c.querySelector('a.hfpxzc');
+                        if (l && targetHref && l.href === targetHref) {
+                            targetLink = l;
+                            break;
+                        }
+                    }
+                    if (!targetLink) {
+                        for (let c of allCards) {
+                            let l = c.querySelector('a.hfpxzc');
+                            let aria = l ? (l.getAttribute('aria-label') || '') : '';
+                            if (aria && aria.trim().toLowerCase() === targetName.toLowerCase()) {
+                                targetLink = l || c;
+                                break;
+                            }
+                        }
+                    }
+                    if (targetLink) targetLink.click();
+                """, target_href, target_name)
+
+                # 3. Synchronized polling (up to 0.9s) — STRICT VERIFICATION: ONLY accept details if title matches THIS exact business!
                 b_website = "N/A"
                 b_phone = card_info.get("phone") or "N/A"
                 b_address = card_info.get("address") or "N/A"
                 b_status = card_info.get("status") or "N/A"
 
                 t_poll = time.time()
-                while time.time() - t_poll < 0.6:
+                while time.time() - t_poll < 0.9:
                     res = driver.execute_script("""
                         let h1 = document.querySelector('h1.DUwDvf');
                         let curTitle = h1 ? h1.innerText.trim() : '';
@@ -1047,9 +1087,20 @@ def run_lead_harvester(
                         };
                     """)
                     cur_title = res.get("title", "")
-                    # Match title change away from previous place or matching business name
-                    if cur_title and (cur_title != last_inspected_title or b_name.lower().split()[0] in cur_title.lower()):
-                        last_inspected_title = cur_title
+                    norm_cur = normalize_name(cur_title)
+
+                    # Strict Name Match: MUST match the current business, never accept another place!
+                    is_match = False
+                    if norm_cur and norm_target:
+                        if norm_target in norm_cur or norm_cur in norm_target:
+                            is_match = True
+                        else:
+                            w_target = target_name.lower().split()
+                            w_cur = cur_title.lower().split()
+                            if w_target and w_cur and w_target[0] == w_cur[0]:
+                                is_match = True
+
+                    if is_match:
                         if res.get("website"):
                             b_website = res["website"]
                         if res.get("phone"):
@@ -1059,7 +1110,9 @@ def run_lead_harvester(
                         if res.get("hours"):
                             b_status = res["hours"]
                         break
+
                     time.sleep(0.06)
+
 
                 # Clean and sanitize address and phone strings to guarantee single-line cells
                 if b_address and b_address != "N/A":

@@ -19,6 +19,7 @@ downloaded_files/
 *.log
 
 # Scraped Output Data
+scrapped_csv/
 *.csv
 *.xlsx
 !samples/*.csv

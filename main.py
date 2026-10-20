@@ -830,10 +830,13 @@ def run_lead_harvester(
 
     try:
         try:
-            # Maintain standard desktop two-column layout (search feed on left, details panel on right)
-            driver.set_window_rect(x=10, y=10, width=1280, height=860)
+            # Maximize window to ensure standard two-column desktop layout on any screen/laptop
+            driver.maximize_window()
         except Exception:
-            pass
+            try:
+                driver.set_window_size(1600, 1000)
+            except Exception:
+                pass
 
         main_window = driver.current_window_handle
 
@@ -848,6 +851,11 @@ def run_lead_harvester(
 
         driver.get(maps_url)
         time.sleep(3.2)
+        try:
+            # Set virtual page zoom to 85% so two-column mode fits comfortably on any laptop resolution
+            driver.execute_script("document.body.style.zoom = '85%';")
+        except Exception:
+            pass
         inject_visual_cursor(driver)
 
         # Handle consent modal if present
@@ -896,40 +904,89 @@ def run_lead_harvester(
             console.print(table)
             console.print()
 
-        # In-Page High-Velocity Harvesting Loop
+        # In-Page List-by-List Harvesting Engine
         stuck_scroll_count = 0
         lead_index = 0
+        last_inspected_title = ""
+
+        # Optimized JavaScript to parse all cards currently rendered in search feed
+        JS_PARSE_LIST_CARDS = """
+        function parseFeedCards() {
+            // Restore feed if stuck in single-pane mode
+            let feed = document.querySelector('div[role="feed"]');
+            if (!feed || window.getComputedStyle(feed).display === 'none') {
+                let back = document.querySelector('button[aria-label="Back"], button[jsaction*="back"], button[aria-label*="back" i]');
+                if (back) back.click();
+            }
+
+            let cards = document.querySelectorAll('div.Nv2PK');
+            let results = [];
+            cards.forEach((c, idx) => {
+                let link = c.querySelector('a.hfpxzc');
+                let name = link ? (link.getAttribute('aria-label') || '') : '';
+                if (!name) {
+                    let title = c.querySelector('div.qBF1Pd');
+                    if (title) name = title.innerText.trim();
+                }
+                if (!name) return;
+
+                let mapsUrl = link ? (link.href || '') : '';
+                let rating = c.querySelector('span.MW4etd')?.innerText?.trim() || '';
+                let reviews = c.querySelector('span.UY7F9')?.innerText?.replace(/[(),]/g, '')?.trim() || '';
+
+                let allLines = Array.from(c.querySelectorAll('div.W4Efsd')).map(el => el.innerText.trim()).filter(Boolean);
+                let category = '';
+                let address = '';
+                let phone = '';
+                let status = '';
+
+                for (let text of allLines) {
+                    let pMatch = text.match(/(?:\\+?1[-.\\s]?)?\\(?([2-9][0-9]{2})\\)?[-.\\s]?([0-9]{3})[-.\\s]?([0-9]{4})/);
+                    if (pMatch && !phone) phone = pMatch[0].trim();
+
+                    if (text.includes('·')) {
+                        let parts = text.split('·').map(s => s.trim());
+                        if (parts.length >= 2 && !category && !text.match(/^[0-9.]+\\([0-9,]+\\)/)) {
+                            category = parts[0];
+                            address = parts.slice(1).join(', ').replace(/^[\\s\\ue000-\\uf8ff,]+/, '').trim();
+                        }
+                    }
+                    if (text.includes('Open') || text.includes('Closed') || text.includes('Closes') || text.includes('Opens')) {
+                        if (!status) status = text;
+                    }
+                }
+
+                results.push({
+                    index: idx,
+                    name: name,
+                    rating: rating,
+                    reviews: reviews,
+                    category: category,
+                    address: address,
+                    phone: phone,
+                    status: status,
+                    maps_url: mapsUrl
+                });
+            });
+            return results;
+        }
+        return parseFeedCards();
+        """
 
         while True:
             # Check quota exit condition
             if not is_all_mode and len(harvested_leads) >= quota:
                 break
 
-            # Ensure browser window focus is active and valid (prevents target window already closed)
+            # Parse visible cards in the feed
             try:
-                if main_window not in driver.window_handles:
-                    if driver.window_handles:
-                        main_window = driver.window_handles[0]
-                        driver.switch_to.window(main_window)
-                    else:
-                        break
+                cards = driver.execute_script(JS_PARSE_LIST_CARDS) or []
             except Exception:
-                pass
+                cards = []
 
-            # Find all card elements currently rendered in feed
-            cards = driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
-            unvisited = []
-            for c in cards:
-                try:
-                    href = c.get_attribute("href") or ""
-                    aria = c.get_attribute("aria-label") or ""
-                    k = aria.strip() if aria else href.strip()
-                    if k and k not in seen_place_keys:
-                        unvisited.append((c, k, aria, href))
-                except Exception:
-                    continue
+            unvisited = [c for c in cards if c.get("name") and c["name"].strip() not in seen_place_keys]
 
-            # If no unvisited cards in current view, scroll down or check end of feed
+            # If no unvisited cards in current view, scroll feed or check end of results
             if not unvisited:
                 if is_end_of_feed(driver):
                     if HAS_RICH:
@@ -949,58 +1006,116 @@ def run_lead_harvester(
                 continue
 
             stuck_scroll_count = 0
-            card, dedup_key, place_name, place_url = unvisited[0]
-            seen_place_keys.add(dedup_key)
+            card_info = unvisited[0]
+            b_name = card_info["name"].replace("Sponsored", "").replace("", "").strip()
+            seen_place_keys.add(card_info["name"].strip())
             lead_index += 1
 
             try:
-                # Fast In-Page Click (<0.5s) without slow full page reloads!
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", card)
-                move_cursor_to(driver, card, click=True)
-                driver.execute_script("arguments[0].click();", card)
-                time.sleep(0.55)
+                # Fast in-page click to load place authority details
+                card_idx = card_info["index"]
+                driver.execute_script(f"""
+                    let cards = document.querySelectorAll('div.Nv2PK');
+                    if (cards[{card_idx}]) {{
+                        let link = cards[{card_idx}].querySelector('a.hfpxzc') || cards[{card_idx}];
+                        link.click();
+                    }}
+                """)
 
-                # Extract all details in 1 single JavaScript execution!
-                details = driver.execute_script(EXTRACT_DETAILS_JS) or {}
+                # Synchronized polling (up to 0.6s) to ensure place details pane matches the current card
+                b_website = "N/A"
+                b_phone = card_info.get("phone") or "N/A"
+                b_address = card_info.get("address") or "N/A"
+                b_status = card_info.get("status") or "N/A"
 
-                raw_b_name = details.get("name") or place_name or "Business"
-                b_name = raw_b_name.split("\n")[0].replace("Sponsored", "").replace("", "").strip()
-                if not b_name:
-                    b_name = place_name.replace("Sponsored", "").replace("", "").strip() or "Business"
+                t_poll = time.time()
+                while time.time() - t_poll < 0.6:
+                    res = driver.execute_script("""
+                        let h1 = document.querySelector('h1.DUwDvf');
+                        let curTitle = h1 ? h1.innerText.trim() : '';
+                        let auth = document.querySelector('a[data-item-id="authority"]');
+                        let fullPhone = document.querySelector('button[data-item-id*="phone"]')?.innerText?.trim() || '';
+                        let fullAddr = document.querySelector('button[data-item-id="address"]')?.innerText?.trim() || '';
+                        let hoursEl = document.querySelector("div[data-item-id='oh']");
+                        let hours = hoursEl ? hoursEl.innerText.split('\\n')[0].trim() : '';
+                        return {
+                            title: curTitle,
+                            website: auth ? auth.href : '',
+                            phone: fullPhone.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
+                            address: fullAddr.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
+                            hours: hours
+                        };
+                    """)
+                    cur_title = res.get("title", "")
+                    # Match title change away from previous place or matching business name
+                    if cur_title and (cur_title != last_inspected_title or b_name.lower().split()[0] in cur_title.lower()):
+                        last_inspected_title = cur_title
+                        if res.get("website"):
+                            b_website = res["website"]
+                        if res.get("phone"):
+                            b_phone = res["phone"]
+                        if res.get("address"):
+                            b_address = res["address"]
+                        if res.get("hours"):
+                            b_status = res["hours"]
+                        break
+                    time.sleep(0.06)
 
-                b_rating_str = details.get("rating") or ""
-                b_reviews_str = details.get("reviews") or ""
+                # Clean and sanitize address and phone strings to guarantee single-line cells
+                if b_address and b_address != "N/A":
+                    b_address = b_address.replace("\r", " ").replace("\n", ", ").strip()
+                    b_address = re.sub(r',\s*(?:Closed|Open|Opens|Closes).*$', '', b_address, flags=re.I).strip()
+                    b_address = re.sub(r',\s*(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}$', '', b_address).strip()
+                    while ", ," in b_address:
+                        b_address = b_address.replace(", ,", ",")
+                    b_address = b_address.strip(" ,")
+
+                if b_phone and b_phone != "N/A":
+                    b_phone = b_phone.replace("\r", " ").replace("\n", " ").strip()
+
+                # CRITICAL LAPTOP SAFEGUARD: If single-pane mode, restore feed immediately via Back button
+                driver.execute_script("""
+                    let feed = document.querySelector('div[role="feed"]');
+                    if (!feed || window.getComputedStyle(feed).display === 'none') {
+                        let backBtn = document.querySelector('button[aria-label="Back"], button[jsaction*="back"], button[aria-label*="back" i]');
+                        if (backBtn) backBtn.click();
+                    }
+                """)
+
+
+                # Format Rating and Review Count
+                b_rating_str = card_info.get("rating") or ""
+                b_reviews_str = card_info.get("reviews") or ""
                 b_rating = float(b_rating_str) if b_rating_str else 0.0
-                b_reviews = int(b_reviews_str) if b_reviews_str else 0
+                try:
+                    b_reviews = int(b_reviews_str.replace(",", "")) if b_reviews_str else 0
+                except Exception:
+                    b_reviews = 0
 
                 if b_rating > 0:
                     rating_reviews_disp = f"⭐ {b_rating:.1f}" + (f" ({b_reviews:,})" if b_reviews > 0 else "")
                 else:
                     rating_reviews_disp = "-"
 
-                b_category = details.get("category") or niche.title()
-                b_address = details.get("address") or "N/A"
-                b_phone = details.get("phone") or "N/A"
-                raw_website = details.get("website") or "N/A"
-                b_status = details.get("hours") or "N/A"
+                b_category = card_info.get("category") or niche.title()
+                place_url = card_info.get("maps_url") or maps_url
 
                 # Website vs Social media distinction:
                 # If website is an Instagram/Facebook link, route it to Social Profiles!
                 social_profiles = []
-                b_website = "N/A"
+                final_website = "N/A"
 
-                if raw_website != "N/A":
-                    if is_social_url(raw_website):
-                        social_profiles.append(raw_website)
-                        b_website = "N/A"
-                    else:
-                        b_website = raw_website
-
-                # Dual-Engine Website Crawler (Always active by default!)
-                b_email = "N/A"
                 if b_website != "N/A":
-                    # 1. Fast Concurrent Multi-Strategy HTTP spider
-                    found_emails, found_phones, found_soc = crawl_website_http(b_website)
+                    if is_social_url(b_website):
+                        social_profiles.append(b_website)
+                        final_website = "N/A"
+                    else:
+                        final_website = b_website
+
+                # Fast Concurrent Multi-Strategy HTTP Website Crawler (Zero tab switching lag!)
+                b_email = "N/A"
+                if final_website != "N/A":
+                    found_emails, found_phones, found_soc = crawl_website_http(final_website)
                     if found_emails:
                         b_email = found_emails[0]
                     if (not b_phone or b_phone == "N/A") and found_phones:
@@ -1009,19 +1124,6 @@ def run_lead_harvester(
                         if s not in social_profiles:
                             social_profiles.append(s)
 
-                    # 2. Dynamic secondary browser window if email is still missing
-                    if b_email == "N/A":
-                        if HAS_RICH:
-                            console.print(f"    [dim]↳ Launching secondary window to inspect website for [cyan]{b_name[:22]}[/cyan]...[/dim]")
-                        dyn_emails, dyn_phones, dyn_soc = crawl_website_dynamic_window(driver, main_window, b_website)
-                        if dyn_emails:
-                            b_email = dyn_emails[0]
-                        if (not b_phone or b_phone == "N/A") and dyn_phones:
-                            b_phone = dyn_phones[0]
-                        for s in dyn_soc:
-                            if s not in social_profiles:
-                                social_profiles.append(s)
-
                 socials_str = ", ".join(social_profiles[:3]) if social_profiles else "N/A"
 
                 # Calculate Lead Quality Score (0–100)
@@ -1029,7 +1131,7 @@ def run_lead_harvester(
                     name=b_name,
                     phone=b_phone,
                     email=b_email,
-                    website=b_website,
+                    website=final_website,
                     rating=b_rating,
                     address=b_address
                 )
@@ -1039,7 +1141,7 @@ def run_lead_harvester(
                     "business_name": b_name,
                     "email": b_email if b_email != "N/A" else "NOT FOUND",
                     "phone": b_phone if b_phone != "N/A" else "NOT FOUND",
-                    "website": b_website if b_website != "N/A" else "NOT FOUND",
+                    "website": final_website if final_website != "N/A" else "NOT FOUND",
                     "category": b_category,
                     "rating_reviews": rating_reviews_disp if rating_reviews_disp != "-" else "NOT FOUND",
                     "social_profiles": socials_str if socials_str != "N/A" else "NOT FOUND",
@@ -1057,7 +1159,7 @@ def run_lead_harvester(
                 if HAS_RICH:
                     phone_disp = b_phone if b_phone != "N/A" else "[red]NOT FOUND[/red]"
                     email_disp = f"[bold green]{b_email}[/bold green]" if b_email != "N/A" else "[red]NOT FOUND[/red]"
-                    web_disp = (b_website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0][:18]) if b_website != "N/A" else "[red]NOT FOUND[/red]"
+                    web_disp = (final_website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0][:18]) if final_website != "N/A" else "[red]NOT FOUND[/red]"
 
                     console.print(
                         f"  [bold cyan]#{lead_index:02d}[/bold cyan]  "
@@ -1074,28 +1176,32 @@ def run_lead_harvester(
 
                 # Real-time Google Sheets streaming (row-by-row)
                 if sheet_url:
-                    if active_sheet_id:
-                        sync_to_google_sheet(
-                            sheet_url,
-                            rows=[lead_record],
-                            topic=f"{niche.title()} in {location.title()}",
-                            sheet_id=active_sheet_id,
-                            mode="append"
-                        )
-                    else:
-                        new_id, new_url = sync_to_google_sheet(
-                            sheet_url,
-                            rows=[lead_record],
-                            topic=f"{niche.title()} in {location.title()}",
-                            sheet_id=None,
-                            mode="append"
-                        )
-                        if new_id:
-                            active_sheet_id = new_id
-                            active_sheet_url = new_url
+                    try:
+                        if active_sheet_id:
+                            sync_to_google_sheet(
+                                sheet_url,
+                                rows=[lead_record],
+                                topic=f"{niche.title()} in {location.title()}",
+                                sheet_id=active_sheet_id,
+                                mode="append"
+                            )
+                        else:
+                            new_id, new_url = sync_to_google_sheet(
+                                sheet_url,
+                                rows=[lead_record],
+                                topic=f"{niche.title()} in {location.title()}",
+                                sheet_id=None,
+                                mode="append"
+                            )
+                            if new_id:
+                                active_sheet_id = new_id
+                                active_sheet_url = new_url
+                    except Exception:
+                        pass
 
             except Exception:
                 continue
+
 
         # Post-Processing: Quality Hierarchy Sorting (Highest Quality at Top!)
         if harvested_leads:

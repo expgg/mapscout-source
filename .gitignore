@@ -10,6 +10,8 @@ ENV/
 build/
 dist/
 *.spec
+*.exe
+*.zip
 
 # Chrome & Automation
 chrome_profile/

@@ -106,7 +106,7 @@ Every search session spins up an independent, professionally formatted Google Sh
 * **Strict Text Clipping:** Configured with `WrapStrategy.CLIP` so no long text ever spills over adjacent cells!
 * **Quality Hierarchy Sorting:** Highest-quality businesses (verified email + phone + site + rating) automatically sorted to the top.
 
-> *For a 2-minute setup guide on connecting your Google Account, read the [Google Sheets Setup Guide](docs/GOOGLE_SHEETS_SETUP.md).*
+> *For a 2-minute setup guide on connecting your Google Account, read the [Google Sheets Setup Guide](other_files/docs/GOOGLE_SHEETS_SETUP.md).*
 
 ---
 
@@ -166,31 +166,38 @@ Every exported CSV and live Google Sheet is structured with 11 standardized colu
 ```
 mapscout/
 │
-├── config/
-│   ├── requirements.txt                # Pinned Python package dependencies
-│   ├── sheet_config.example.json       # Template configuration for Google Sheets Webhook
-│   └── sheet_config.json               # Local user Google Sheets config (git-ignored)
+├── modules/                            # Modularized functional architecture
+│   ├── __init__.py                     # Package initialization & version info
+│   ├── config.py                       # Configuration loaders, paths, & constants
+│   ├── crawler.py                      # Dual-engine website spider (HTTP + Dynamic)
+│   ├── cursor.py                       # Virtual cursor injection & visual effects
+│   ├── extractor.py                    # Multi-strategy data extraction & quality score
+│   ├── harvester.py                    # Lead harvesting orchestration engine
+│   ├── maps.py                         # Google Maps DOM interaction & anti-scramble engine
+│   ├── sheets.py                       # Live Google Sheets webhook synchronizer
+│   └── ui.py                           # Rich console dashboard & interactive setup
 │
-├── docs/
-│   ├── assets/                         # SaaS hero banners & visual assets
-│   ├── ARCHITECTURE.md                 # Technical deep-dive on feed scrolling & anti-detection
-│   └── GOOGLE_SHEETS_SETUP.md          # Step-by-step Google Apps Script setup guide
+├── other_files/                        # Secondary project documentation & configs
+│   ├── config/                         # Configuration templates & settings
+│   ├── docs/                           # Architecture guides & visual assets
+│   ├── google_sheets/                  # Google Apps Script Webhook source (code.gs)
+│   ├── samples/                        # Sample data exports
+│   └── scripts/                        # Dependency installation & build scripts
 │
-├── google_sheets/
-│   └── code.gs                         # Google Apps Script engine for Drive auto-creation
+├── junk_files/                         # Automated cache & build directories (git-ignored)
+│   ├── chrome_profile/                 # Ephemeral browser profiles
+│   ├── downloaded_files/               # Temporary downloads
+│   ├── build/                          # PyInstaller build files
+│   └── dist/                           # Standalone executables & zip archives
 │
-├── samples/
-│   └── sample_leads_intelligence.csv   # Clean 11-column sample dataset
+├── scrapped_csv/                       # Clean repository for all scraped CSV lead exports
 │
-├── scripts/
-│   └── INSTALL_DEPENDENCIES.bat        # 1-click package installer
-│
-├── .gitignore                          # Security rules (excludes browser cookies & personal tokens)
+├── .gitignore                          # Security rules (excludes personal configs & junk)
 ├── LAUNCH_SCRAPER.bat                  # 1-click Windows master launcher
 ├── LICENSE                             # MIT License
-├── README.md                           # Master documentation & visual guide
+├── README.md                           # Master documentation
 ├── requirements.txt                    # Root Python dependencies
-└── main.py                             # High-velocity automation engine & interactive Rich CLI HUD
+└── main.py                             # Clean, ultra-fast CLI entry point (<75 lines)
 ```
 
 ---

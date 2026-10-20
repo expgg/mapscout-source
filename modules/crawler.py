@@ -1,0 +1,264 @@
+"""
+MapScout v2.5 — Dual-Engine Website Spider
+High-speed concurrent HTTP spider + dynamic secondary browser tab fallback for JavaScript/SPA sites.
+"""
+
+import time
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+from bs4 import BeautifulSoup
+from selenium.common.exceptions import TimeoutException
+
+from modules.extractor import (
+    is_valid_email,
+    clean_phone_number,
+    is_social_url,
+    extract_from_html_content
+)
+
+
+def crawl_website_http(base_url: str):
+    """
+    Multi-strategy high-velocity concurrent HTTP spider.
+    Extracts emails, phone numbers, and social profiles from homepage,
+    contact pages, about pages, and privacy policy pages in parallel.
+    Uses non-blocking timeouts to prevent hanging.
+    """
+    discovered_emails = set()
+    discovered_phones = set()
+    discovered_socials = set()
+
+    if not base_url or not base_url.startswith("http") or is_social_url(base_url):
+        return list(discovered_emails), list(discovered_phones), list(discovered_socials)
+
+    http_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1"
+    }
+
+    base_domain = urllib.parse.urlparse(base_url).netloc.lower().replace("www.", "")
+    contact_urls = set()
+
+    # Common standard probe paths
+    standard_paths = [
+        "/contact", "/contact-us", "/contactus", "/pages/contact",
+        "/about", "/about-us", "/aboutus", "/support", "/help", "/location"
+    ]
+    for p in standard_paths:
+        contact_urls.add(urllib.parse.urljoin(base_url, p))
+
+    try:
+        # Step 1: Fetch homepage with clean session
+        with requests.Session() as session:
+            session.headers.update(http_headers)
+            resp = session.get(base_url, timeout=(2.5, 3.5), verify=False)
+            if resp.status_code == 200:
+                em, ph, soc = extract_from_html_content(resp.text, base_url)
+                discovered_emails.update(em)
+                discovered_phones.update(ph)
+                discovered_socials.update(soc)
+
+                # Step 2: Discover internal contact/policy anchors from homepage
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                for a in soup.find_all('a', href=True):
+                    href = a['href'].strip()
+                    full_url = urllib.parse.urljoin(base_url, href)
+                    target_netloc = urllib.parse.urlparse(full_url).netloc.lower().replace("www.", "")
+                    if target_netloc == base_domain and any(k in full_url.lower() for k in ['contact', 'about', 'reach', 'support', 'help']):
+                        contact_urls.add(full_url.split('#')[0])
+
+    except Exception:
+        pass
+
+    # Step 3: Fetch subpages concurrently via ThreadPoolExecutor with strict timeout
+    urls_to_crawl = list(contact_urls)[:5]
+
+    def fetch_subpage(url):
+        try:
+            with requests.Session() as s:
+                s.headers.update(http_headers)
+                r = s.get(url, timeout=(2.0, 3.0), verify=False)
+                if r.status_code == 200:
+                    return extract_from_html_content(r.text, url)
+        except Exception:
+            pass
+        return set(), set(), set()
+
+    if urls_to_crawl and (not discovered_emails or not discovered_phones):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_url = {executor.submit(fetch_subpage, u): u for u in urls_to_crawl}
+            try:
+                for future in as_completed(future_to_url, timeout=4.0):
+                    try:
+                        em, ph, soc = future.result()
+                        discovered_emails.update(em)
+                        discovered_phones.update(ph)
+                        discovered_socials.update(soc)
+                    except Exception:
+                        pass
+            except TimeoutError:
+                pass
+            except Exception:
+                pass
+
+    return list(discovered_emails), list(discovered_phones), list(discovered_socials)
+
+
+DOM_EXTRACT_JS = r"""
+function extractWebsiteDom() {
+    let emails = [];
+    let phones = [];
+    let socials = [];
+    let contactLinks = [];
+
+    // 1. Mailto links
+    document.querySelectorAll('a[href*="mailto:"]').forEach(a => {
+        try {
+            let raw = decodeURIComponent(a.href);
+            let m = raw.replace(/^.*?mailto:/i, '').split('?')[0].trim();
+            if (m && m.includes('@')) emails.push(m);
+        } catch(e) {}
+    });
+
+    // 2. Tel links
+    document.querySelectorAll('a[href*="tel:"]').forEach(a => {
+        try {
+            let t = a.href.replace(/^.*?tel:/i, '').split('?')[0].trim();
+            if (t) phones.push(t);
+        } catch(e) {}
+    });
+
+    // 3. Socials & contact links
+    document.querySelectorAll('a[href]').forEach(a => {
+        try {
+            let h = a.href;
+            let hl = h.toLowerCase();
+            if (hl.includes('facebook.com/') || hl.includes('instagram.com/') || hl.includes('linkedin.com/') || hl.includes('twitter.com/') || hl.includes('x.com/')) {
+                if (!hl.includes('/share') && !hl.includes('/intent') && !hl.includes('.jpg') && !hl.includes('.png')) {
+                    socials.push(h.split('?')[0]);
+                }
+            }
+            if (hl.includes('contact') || hl.includes('about') || hl.includes('support') || hl.includes('reach')) {
+                if (h.startsWith('http') && !contactLinks.includes(h)) {
+                    contactLinks.push(h);
+                }
+            }
+        } catch(e) {}
+    });
+
+    // 4. Inner text scan
+    let bodyText = document.body ? document.body.innerText : '';
+    let matches = bodyText.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g) || [];
+    matches.forEach(e => emails.push(e));
+
+    return {
+        emails: emails,
+        phones: phones,
+        socials: socials,
+        contactLinks: contactLinks,
+        html: document.documentElement.outerHTML
+    };
+}
+return extractWebsiteDom();
+"""
+
+
+def crawl_website_dynamic_window(driver, main_window, base_url: str):
+    """
+    Secondary browser window fallback for dynamic React/Vue/SPA sites.
+    Guarantees clean tab closure and returns focus safely to main_window.
+    """
+    discovered_emails = set()
+    discovered_phones = set()
+    discovered_socials = set()
+
+    if not base_url or not base_url.startswith("http") or is_social_url(base_url):
+        return list(discovered_emails), list(discovered_phones), list(discovered_socials)
+
+    opened_tab = None
+
+    try:
+        handles_before = set(driver.window_handles)
+        driver.switch_to.new_window('tab')
+        handles_after = set(driver.window_handles) - handles_before
+        if handles_after:
+            opened_tab = list(handles_after)[0]
+
+        driver.set_page_load_timeout(6.0)
+
+        try:
+            driver.get(base_url)
+        except TimeoutException:
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+
+        time.sleep(0.9)
+
+        # Direct in-browser JavaScript DOM extraction
+        dom_data = driver.execute_script(DOM_EXTRACT_JS) or {}
+        for em in dom_data.get("emails", []):
+            if is_valid_email(em):
+                discovered_emails.add(em)
+        for ph in dom_data.get("phones", []):
+            cp = clean_phone_number(ph)
+            if cp:
+                discovered_phones.add(cp)
+        for soc in dom_data.get("socials", []):
+            discovered_socials.add(soc)
+
+        # Fallback to HTML parser
+        raw_html = dom_data.get("html") or ""
+        if raw_html:
+            em2, ph2, soc2 = extract_from_html_content(raw_html, base_url)
+            discovered_emails.update(em2)
+            discovered_phones.update(ph2)
+            discovered_socials.update(soc2)
+
+        # If email still not found, navigate tab to the first discovered contact page
+        contact_links = dom_data.get("contactLinks", [])
+        if not discovered_emails and contact_links:
+            target_contact = contact_links[0]
+            try:
+                driver.get(target_contact)
+            except TimeoutException:
+                try:
+                    driver.execute_script("window.stop();")
+                except Exception:
+                    pass
+            time.sleep(0.8)
+
+            sub_dom = driver.execute_script(DOM_EXTRACT_JS) or {}
+            for em in sub_dom.get("emails", []):
+                if is_valid_email(em):
+                    discovered_emails.add(em)
+            for ph in sub_dom.get("phones", []):
+                cp = clean_phone_number(ph)
+                if cp:
+                    discovered_phones.add(cp)
+            for soc in sub_dom.get("socials", []):
+                discovered_socials.add(soc)
+
+    except Exception:
+        pass
+    finally:
+        try:
+            if opened_tab and opened_tab in driver.window_handles and opened_tab != main_window:
+                driver.switch_to.window(opened_tab)
+                driver.close()
+        except Exception:
+            pass
+        try:
+            if main_window in driver.window_handles:
+                driver.switch_to.window(main_window)
+            elif driver.window_handles:
+                driver.switch_to.window(driver.window_handles[0])
+            driver.set_page_load_timeout(30)
+        except Exception:
+            pass
+
+    return list(discovered_emails), list(discovered_phones), list(discovered_socials)

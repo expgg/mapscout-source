@@ -32,7 +32,7 @@ def print_banner():
         print("Engineered by Al Hossain Rifat\n")
 
 
-def print_config_panel(niche: str, location: str, quota_display: str, sheet_url: str, output_path: str):
+def print_config_panel(niche: str, location: str, quota_display: str, sheet_url: str, output_path: str, deep_rescue: bool = False):
     if HAS_RICH:
         grid = Table.grid(expand=True, padding=(0, 2))
         grid.add_column(style="bold cyan", justify="left")
@@ -41,7 +41,8 @@ def print_config_panel(niche: str, location: str, quota_display: str, sheet_url:
         grid.add_column(style="white", justify="left")
 
         grid.add_row("Niche / Category:", f"[yellow]{niche}[/yellow]", "Target Geo:", f"[green]{location}[/green]")
-        grid.add_row("Harvest Quota:", f"[magenta]{quota_display}[/magenta]", "Website Crawler:", "[green]Active (Dual-Engine)[/green]")
+        rescue_status = "[green]Screaming Frog (Batch)[/green]" if deep_rescue else "[dim]Standard Engine[/dim]"
+        grid.add_row("Harvest Quota:", f"[magenta]{quota_display}[/magenta]", "Deep Rescue:", rescue_status)
         webhook_status = "[green]Connected (Live Stream)[/green]" if sheet_url else "[dim]Disabled (Local CSV)[/dim]"
         grid.add_row("Google Sheets:", webhook_status, "Output File:", f"[dim]{output_path}[/dim]")
 
@@ -51,7 +52,7 @@ def print_config_panel(niche: str, location: str, quota_display: str, sheet_url:
     else:
         print("-" * 65)
         print(f"Niche: {niche} | Location: {location}")
-        print(f"Quota: {quota_display} | Web Crawler: Active")
+        print(f"Quota: {quota_display} | Deep Rescue: {'Active' if deep_rescue else 'Disabled'}")
         print(f"Google Sheets: {'Connected' if sheet_url else 'Disabled'}")
         print(f"Output File: {output_path}")
         print("-" * 65 + "\n")
@@ -160,6 +161,7 @@ def prompt_user_input():
         sheet_prompt = f" [dim]({saved_sheet_url[:40]}...)[/dim]" if saved_sheet_url else " [dim](Press Enter to skip)[/dim]"
         sheet_in = console.input(f"  [bold cyan]?[/bold cyan] Google Sheets Webhook URL{sheet_prompt}: ").strip()
         headless_in = console.input("  [bold cyan]?[/bold cyan] Run in Headless Mode? (y/N) [dim](N)[/dim]: ").strip()
+        frog_in = console.input("  [bold cyan]?[/bold cyan] Enable Screaming Frog Deep Rescue on stubborn sites? (y/N) [dim](N)[/dim]: ").strip()
         console.print()
     else:
         print("Interactive Session Setup (Press Enter to accept defaults):\n")
@@ -168,6 +170,7 @@ def prompt_user_input():
         quota_in = input(f"  ? Lead Harvest Quota (Enter number or 'all') [{default_quota}]: ").strip()
         sheet_in = input("  ? Google Sheets Webhook URL: ").strip()
         headless_in = input("  ? Run in Headless Mode? (y/N) [N]: ").strip()
+        frog_in = input("  ? Enable Screaming Frog Deep Rescue on stubborn sites? (y/N) [N]: ").strip()
         print()
 
     niche = niche_in if niche_in else default_niche
@@ -190,5 +193,6 @@ def prompt_user_input():
         sheet_url = None
 
     headless = headless_in.lower() == 'y' if headless_in else False
+    deep_rescue = frog_in.lower() == 'y' if frog_in else False
 
-    return niche, location, quota, sheet_url, headless
+    return niche, location, quota, sheet_url, headless, deep_rescue

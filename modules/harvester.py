@@ -24,6 +24,7 @@ from modules.ui import (
 from modules.cursor import inject_visual_cursor, move_cursor_to
 from modules.extractor import normalize_name, is_social_url, is_aggregator_url, compute_quality_score
 from modules.crawler import crawl_website_http, resolve_aggregator_landing_page
+from modules.frog_rescue import run_screaming_frog_rescue
 from modules.sheets import check_webhook_status, sync_to_google_sheet
 from modules.maps import (
     JS_PARSE_LIST_CARDS,
@@ -42,7 +43,8 @@ def run_lead_harvester(
     quota: int = 20,
     sheet_url: str = None,
     output_path: str = None,
-    headless: bool = False
+    headless: bool = False,
+    deep_rescue: bool = False
 ):
     """
     Main lead harvesting pipeline.
@@ -65,7 +67,7 @@ def run_lead_harvester(
     elif not os.path.isabs(output_path) and not os.path.dirname(output_path):
         output_path = os.path.join(csv_dir, output_path)
 
-    print_config_panel(niche, location, quota_display, sheet_url, output_path)
+    print_config_panel(niche, location, quota_display, sheet_url, output_path, deep_rescue)
     check_webhook_status(sheet_url)
 
     harvested_leads = []
@@ -382,6 +384,14 @@ def run_lead_harvester(
 
             except Exception:
                 continue
+
+        # Optional Screaming Frog Batch Deep Rescue on stubborn leads
+        if harvested_leads and deep_rescue:
+            harvested_leads = run_screaming_frog_rescue(
+                leads=harvested_leads,
+                csv_path=output_path,
+                sheet_url=sheet_url
+            )
 
         # Post-Processing: Quality Hierarchy Sorting
         if harvested_leads:

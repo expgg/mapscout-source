@@ -15,7 +15,7 @@ from modules.harvester import run_lead_harvester
 
 def main():
     parser = argparse.ArgumentParser(
-        description="High-Velocity Google Maps Lead Harvester v2.5 — Engineered by Al Hossain Rifat",
+        description="High-Velocity Google Maps Lead Harvester v2.6 — Engineered by Al Hossain Rifat",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("-n", "--niche", type=str, default=None, help="Target business niche (e.g., 'Watch Store')")
@@ -25,12 +25,13 @@ def main():
     parser.add_argument("--sheet-url", type=str, default=None, help="Google Apps Script Webhook URL for live streaming")
     parser.add_argument("-o", "--output", type=str, default=None, help="Custom output CSV filepath")
     parser.add_argument("--headless", action="store_true", help="Run Chrome browser in headless mode")
+    parser.add_argument("--deep-rescue", action="store_true", help="Run Screaming Frog headless batch audit at the end to rescue stubborn missing emails")
 
     args = parser.parse_args()
 
     # If no CLI arguments provided, launch interactive setup
     if args.niche is None and args.location is None:
-        niche, location, quota, sheet_url, headless = prompt_user_input()
+        niche, location, quota, sheet_url, headless, deep_rescue = prompt_user_input()
         output_path = args.output
     else:
         niche = args.niche or "Watch Store"
@@ -53,6 +54,7 @@ def main():
         sheet_url = args.sheet_url or load_saved_sheet_url()
         output_path = args.output
         headless = args.headless
+        deep_rescue = args.deep_rescue
 
     run_lead_harvester(
         niche=niche,
@@ -60,7 +62,8 @@ def main():
         quota=quota,
         sheet_url=sheet_url,
         output_path=output_path,
-        headless=headless
+        headless=headless,
+        deep_rescue=deep_rescue
     )
 
 

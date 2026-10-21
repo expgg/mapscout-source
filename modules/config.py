@@ -117,3 +117,16 @@ def load_saved_sheet_url() -> str:
             except Exception:
                 pass
     return None
+
+
+def get_screaming_frog_cli() -> str:
+    """Finds path to Screaming Frog SEO Spider CLI executable."""
+    candidates = [
+        r"X:\APPS\Screaming Frog SEO Spider\ScreamingFrogSEOSpiderCli.exe",
+        r"C:\Program Files\Screaming Frog SEO Spider\ScreamingFrogSEOSpiderCli.exe",
+        r"C:\Program Files (x86)\Screaming Frog SEO Spider\ScreamingFrogSEOSpiderCli.exe",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None

@@ -49,7 +49,8 @@ JUNK_SUBSTRINGS = (
     'company.com', 'mycompany.com', 'placeholder', 'schema.org',
     'bootstrap', 'cloudflare.com', 'wordpress.org', 'wix-fonts',
     'fancybox', 'react@', 'vue@', 'core-js@', 'babel@', 'webpack@',
-    'lodash@', 'fontawesome@', 'jquery@', 'npm@', 'git@', 'test@test'
+    'lodash@', 'fontawesome@', 'jquery@', 'npm@', 'git@', 'test@test',
+    'your@email.com', 'email@email.com', 'user@domain.com'
 )
 
 

@@ -79,7 +79,7 @@ def run_lead_harvester(
     else:
         print("[*] Launching High-Velocity Browser Engine...")
 
-    driver = Driver(uc=True, headless=headless, user_data_dir=profile_dir)
+    driver = Driver(uc=True, headless=headless, user_data_dir=profile_dir, block_images=True)
 
     try:
         try:
@@ -187,14 +187,15 @@ def run_lead_harvester(
                 # 2. Click the exact card element matching target_href or target_name
                 driver.execute_script(JS_CLICK_CARD, target_href, target_name)
 
-                # 3. Synchronized polling (up to 0.9s) — STRICT VERIFICATION: ONLY accept details if title matches THIS exact business!
+                # 3. Synchronized polling (up to 1.1s) — STRICT VERIFICATION: ONLY accept details if title matches THIS exact business!
                 b_website = "N/A"
                 b_phone = card_info.get("phone") or "N/A"
                 b_address = card_info.get("address") or "N/A"
                 b_status = card_info.get("status") or "N/A"
 
                 t_poll = time.time()
-                while time.time() - t_poll < 0.9:
+                first_match_t = None
+                while time.time() - t_poll < 1.1:
                     res = driver.execute_script(JS_POLL_DETAILS)
                     cur_title = res.get("title", "")
                     norm_cur = normalize_name(cur_title)
@@ -210,6 +211,9 @@ def run_lead_harvester(
                                 is_match = True
 
                     if is_match:
+                        if first_match_t is None:
+                            first_match_t = time.time()
+
                         if res.get("website"):
                             b_website = res["website"]
                         if res.get("phone"):
@@ -218,9 +222,16 @@ def run_lead_harvester(
                             b_address = res["address"]
                         if res.get("hours"):
                             b_status = res["hours"]
-                        break
 
-                    time.sleep(0.06)
+                        # Fast exit: if website is found, break immediately!
+                        if b_website != "N/A":
+                            break
+
+                        # If website hasn't mounted yet, allow up to 0.35s after title match
+                        if time.time() - first_match_t >= 0.35:
+                            break
+
+                    time.sleep(0.05)
 
                 # Clean and sanitize address and phone strings to guarantee single-line cells
                 if b_address and b_address != "N/A":

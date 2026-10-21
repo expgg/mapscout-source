@@ -200,9 +200,9 @@ def extract_from_html_content(raw_html: str, base_url: str):
                 if tel_val:
                     phones.add(tel_val)
 
-            # Social links
+            # Social links (excluding share intents and website builder vendor accounts)
             for platform in ['linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com']:
-                if platform in hl and not any(k in hl for k in ['share', 'intent', 'cdn', '.jpg', '.png', 'sharer']):
+                if platform in hl and not any(k in hl for k in ['share', 'intent', 'cdn', '.jpg', '.png', 'sharer', '/squarespace', '/shopify', '/wix', '/wordpress', '/weebly']):
                     socials.add(h.split('?')[0].strip())
 
         # JSON-LD Schema (LocalBusiness, Organization, Store)

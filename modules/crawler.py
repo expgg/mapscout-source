@@ -43,15 +43,8 @@ def crawl_website_http(base_url: str):
     }
 
     base_domain = urllib.parse.urlparse(base_url).netloc.lower().replace("www.", "")
-    contact_urls = set()
-
-    # Common standard probe paths
-    standard_paths = [
-        "/contact", "/contact-us", "/contactus", "/pages/contact",
-        "/about", "/about-us", "/aboutus", "/support", "/help", "/location"
-    ]
-    for p in standard_paths:
-        contact_urls.add(urllib.parse.urljoin(base_url, p))
+    discovered_contact_anchors = []
+    discovered_about_anchors = []
 
     try:
         # Step 1: Fetch homepage with clean session
@@ -64,20 +57,42 @@ def crawl_website_http(base_url: str):
                 discovered_phones.update(ph)
                 discovered_socials.update(soc)
 
-                # Step 2: Discover internal contact/policy anchors from homepage
+                # Step 2: Discover internal contact/policy anchors from homepage navigation
                 soup = BeautifulSoup(resp.text, 'html.parser')
+                contact_keywords = ['contact', 'reach', 'touch', 'support', 'help']
+                about_keywords = ['about', 'team', 'staff', 'story', 'who-we-are']
+
                 for a in soup.find_all('a', href=True):
                     href = a['href'].strip()
-                    full_url = urllib.parse.urljoin(base_url, href)
+                    full_url = urllib.parse.urljoin(base_url, href).split('#')[0]
                     target_netloc = urllib.parse.urlparse(full_url).netloc.lower().replace("www.", "")
-                    if target_netloc == base_domain and any(k in full_url.lower() for k in ['contact', 'about', 'reach', 'support', 'help']):
-                        contact_urls.add(full_url.split('#')[0])
+                    if target_netloc == base_domain and full_url != base_url:
+                        hl = full_url.lower()
+                        text = a.text.lower()
+                        if any(k in hl or k in text for k in contact_keywords):
+                            if full_url not in discovered_contact_anchors:
+                                discovered_contact_anchors.append(full_url)
+                        elif any(k in hl or k in text for k in about_keywords):
+                            if full_url not in discovered_about_anchors:
+                                discovered_about_anchors.append(full_url)
 
     except Exception:
         pass
 
-    # Step 3: Fetch subpages concurrently via ThreadPoolExecutor with strict timeout
-    urls_to_crawl = list(contact_urls)[:5]
+    # Common standard probe paths as fallback
+    standard_probes = [
+        urllib.parse.urljoin(base_url, p) for p in [
+            "/contact", "/contact-us", "/about", "/about-us", "/pages/contact", "/contactus"
+        ]
+    ]
+
+    # Prioritize: Verified Contact Nav Links -> Verified About Links -> Fallback Probes
+    urls_to_crawl = []
+    for u in discovered_contact_anchors + discovered_about_anchors + standard_probes:
+        if u not in urls_to_crawl and u != base_url:
+            urls_to_crawl.append(u)
+
+    urls_to_crawl = urls_to_crawl[:8]
 
     def fetch_subpage(url):
         try:
@@ -91,10 +106,10 @@ def crawl_website_http(base_url: str):
         return set(), set(), set()
 
     if urls_to_crawl and (not discovered_emails or not discovered_phones):
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=6) as executor:
             future_to_url = {executor.submit(fetch_subpage, u): u for u in urls_to_crawl}
             try:
-                for future in as_completed(future_to_url, timeout=4.0):
+                for future in as_completed(future_to_url, timeout=5.0):
                     try:
                         em, ph, soc = future.result()
                         discovered_emails.update(em)

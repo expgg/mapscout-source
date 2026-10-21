@@ -23,11 +23,11 @@ except ImportError:
 def print_banner():
     if HAS_RICH:
         console.print()
-        console.print("[bold cyan]✦ MapScout[/bold cyan] [dim]v2.5[/dim]")
+        console.print("[bold cyan]✦ MapScout[/bold cyan] [dim]v2.6[/dim]")
         console.print("[dim]Autonomous High-Velocity Google Maps Lead Harvester & B2B Engine[/dim]")
         console.print("[italic yellow]Engineered by Al Hossain Rifat[/italic yellow]\n")
     else:
-        print("\n* MapScout v2.5")
+        print("\n* MapScout v2.6")
         print("Autonomous High-Velocity Google Maps Lead Harvester & B2B Engine")
         print("Engineered by Al Hossain Rifat\n")
 

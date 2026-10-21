@@ -33,8 +33,25 @@ if sys.platform == "win32":
 SOCIAL_DOMAINS = [
     "instagram.com", "facebook.com", "fb.com", "twitter.com",
     "x.com", "tiktok.com", "linkedin.com", "youtube.com",
-    "pinterest.com", "yelp.com", "tripadvisor.com"
+    "pinterest.com", "yelp.com", "tripadvisor.com",
+    "discord.gg", "discord.com", "t.me", "telegram.me",
+    "snapchat.com", "wa.me", "whatsapp.com", "spotify.com",
+    "threads.net"
 ]
+
+AGGREGATOR_DOMAINS = [
+    "linktr.ee", "linktree.com", "beacons.ai", "beacons.page",
+    "bio.link", "taplink.cc", "campsite.bio", "flowcode.com"
+]
+
+WHOIS_PRIVACY_TERMS = (
+    "abuse@", "noc@", "whoisguard", "privacyprotect", "contactprivacy",
+    "domainsbyproxy", "withheldforprivacy", "redacted", "anonymouse",
+    "not.disclosed", "gdpr", "superprivacy", "proxy", "markmonitor",
+    "namecheap", "godaddy", "registrar", "networksolutions", "cloudflare",
+    "pir.org", "icann.org", "verisign", "iana.org", "arin.net", "apnic",
+    "ripe.net", "registry", "whoisrequest@"
+)
 
 EMAIL_REGEX = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 PHONE_REGEX = re.compile(r'(?:\+?1[-.\s]?)?\(?([2-9][0-9]{2})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})')

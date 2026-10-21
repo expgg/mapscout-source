@@ -10,6 +10,8 @@ import urllib.parse
 from bs4 import BeautifulSoup
 from modules.config import (
     SOCIAL_DOMAINS,
+    AGGREGATOR_DOMAINS,
+    WHOIS_PRIVACY_TERMS,
     EMAIL_REGEX,
     PHONE_REGEX,
     JUNK_EXTS,
@@ -78,7 +80,80 @@ def is_social_url(url: str) -> bool:
     if not url or url == "N/A":
         return False
     u = url.lower()
-    return any(sd in u for sd in SOCIAL_DOMAINS)
+    return any(sd in u for sd in SOCIAL_DOMAINS) or any(ad in u for ad in AGGREGATOR_DOMAINS)
+
+
+def is_aggregator_url(url: str) -> bool:
+    """Determines whether a URL points to a link-in-bio aggregator (Linktree, Beacons, etc.)."""
+    if not url or url == "N/A":
+        return False
+    u = url.lower()
+    return any(ad in u for ad in AGGREGATOR_DOMAINS)
+
+
+def extract_clean_domain(url: str) -> str:
+    """Extracts base registered domain name from URL (e.g. stores.nordstromrack.com -> nordstromrack.com)."""
+    if not url or url == "N/A":
+        return ""
+    try:
+        netloc = urllib.parse.urlparse(url).netloc.lower()
+        if ":" in netloc:
+            netloc = netloc.split(":")[0]
+        netloc = netloc.replace("www.", "")
+        parts = netloc.split(".")
+        if len(parts) >= 2:
+            return ".".join(parts[-2:])
+        return netloc
+    except Exception:
+        return ""
+
+
+def lookup_domain_whois(domain: str) -> str:
+    """
+    Queries RDAP public registry to discover registrant email.
+    Discards known registrar abuse, privacy proxies, and masked accounts.
+    """
+    if not domain or "." not in domain or any(s in domain for s in SOCIAL_DOMAINS):
+        return ""
+    try:
+        import requests
+        import json
+        r = requests.get(
+            f"https://rdap.org/domain/{domain}",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=3.0
+        )
+        if r.status_code == 200:
+            data = r.json()
+            candidates = []
+
+            def walk_entities(entities):
+                for ent in entities:
+                    roles = [str(ro).lower() for ro in ent.get('roles', [])]
+                    # Skip top-level registrar and abuse reporting contacts
+                    if not any(ro in ('registrar', 'abuse') for ro in roles):
+                        vcard = ent.get('vcardArray', [])
+                        if len(vcard) > 1 and isinstance(vcard[1], list):
+                            for item in vcard[1]:
+                                if isinstance(item, list) and len(item) >= 4 and item[0] == 'email':
+                                    candidates.append(str(item[3]))
+                        ent_str = json.dumps(ent)
+                        for em in re.findall(EMAIL_REGEX, ent_str):
+                            candidates.append(em)
+                    if 'entities' in ent:
+                        walk_entities(ent['entities'])
+
+            walk_entities(data.get('entities', []))
+
+            for em in candidates:
+                em_clean = em.strip().rstrip(".")
+                if is_valid_email(em_clean):
+                    em_lower = em_clean.lower()
+                    if not any(term in em_lower for term in WHOIS_PRIVACY_TERMS):
+                        return em_clean
+    except Exception:
+        pass
+    return ""
 
 
 def extract_from_html_content(raw_html: str, base_url: str):
@@ -151,22 +226,24 @@ def extract_from_html_content(raw_html: str, base_url: str):
             except Exception:
                 pass
 
+        # Decompose non-visible script, style, svg tags to prevent phantom matches
+        for tag in soup(["script", "style", "noscript", "svg"]):
+            tag.decompose()
+        visible_text = soup.get_text(separator=' ')
     except Exception:
-        pass
+        visible_text = clean_html
 
     # 4. Normalized Written Obfuscations ("name [at] domain.com" or "name (at) domain.com")
-    normalized_text = re.sub(r'\s*(?:\[|\()at(?:\]|\))\s*', '@', clean_html, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'\s*(?:\[|\()dot(?:\]|\))\s*', '.', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'\s+at\s+', '@', normalized_text, flags=re.IGNORECASE)
-    normalized_text = re.sub(r'\s+dot\s+', '.', normalized_text, flags=re.IGNORECASE)
+    normalized_text = re.sub(r'\s*(?:\[|\(|\{)at(?:\]|\)|\})\s*', '@', visible_text, flags=re.IGNORECASE)
+    normalized_text = re.sub(r'\s*(?:\[|\(|\{)dot(?:\]|\)|\})\s*', '.', normalized_text, flags=re.IGNORECASE)
 
     # 5. Regex emails
     for match in EMAIL_REGEX.findall(normalized_text):
         if is_valid_email(match):
             emails.add(match.strip().rstrip('.'))
 
-    # 6. Regex phone numbers
-    for m in PHONE_REGEX.finditer(clean_html):
+    # 6. Regex phone numbers from visible text
+    for m in PHONE_REGEX.finditer(visible_text):
         p_str = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
         phones.add(p_str)
 

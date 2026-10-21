@@ -14,6 +14,9 @@ from modules.extractor import (
     is_valid_email,
     clean_phone_number,
     is_social_url,
+    is_aggregator_url,
+    extract_clean_domain,
+    lookup_domain_whois,
     extract_from_html_content
 )
 
@@ -104,7 +107,63 @@ def crawl_website_http(base_url: str):
             except Exception:
                 pass
 
+    # Step 4: WHOIS Registry Fallback
+    # If no email was discovered on the website pages, query RDAP registry for registrant email
+    if not discovered_emails:
+        try:
+            clean_dom = extract_clean_domain(base_url)
+            if clean_dom:
+                whois_em = lookup_domain_whois(clean_dom)
+                if whois_em:
+                    discovered_emails.add(whois_em)
+        except Exception:
+            pass
+
     return list(discovered_emails), list(discovered_phones), list(discovered_socials)
+
+
+def resolve_aggregator_landing_page(aggregator_url: str):
+    """
+    Resolves link-in-bio aggregators (Linktree, Beacons.ai, Taplink, Bio.link).
+    Extracts direct emails, social channels, and the actual business domain website.
+    Returns: (real_website_url or None, emails_list, phones_list, socials_list)
+    """
+    real_website = None
+    emails = set()
+    phones = set()
+    socials = set()
+
+    if not aggregator_url or not aggregator_url.startswith("http"):
+        return None, list(emails), list(phones), list(socials)
+
+    http_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+
+    try:
+        r = requests.get(aggregator_url, headers=http_headers, timeout=(3.0, 4.0), verify=False)
+        if r.status_code == 200:
+            em, ph, soc = extract_from_html_content(r.text, aggregator_url)
+            emails.update(em)
+            phones.update(ph)
+            socials.update(soc)
+
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a["href"].strip()
+                if not href.startswith("http"):
+                    continue
+                hl = href.lower()
+                # Check if this link is a genuine business website (not social media, not linktree itself)
+                if not is_social_url(href) and not is_aggregator_url(href):
+                    if not any(j in hl for j in ["apple.com", "spotify.com", "google.com", "terms", "privacy", "cookie", "login", "signup", "report", "pricing"]):
+                        real_website = href.split("?")[0].rstrip("/")
+                        break
+    except Exception:
+        pass
+
+    return real_website, list(emails), list(phones), list(socials)
 
 
 DOM_EXTRACT_JS = r"""

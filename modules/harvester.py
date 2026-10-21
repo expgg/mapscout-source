@@ -22,8 +22,8 @@ from modules.ui import (
     console
 )
 from modules.cursor import inject_visual_cursor, move_cursor_to
-from modules.extractor import normalize_name, is_social_url, compute_quality_score
-from modules.crawler import crawl_website_http
+from modules.extractor import normalize_name, is_social_url, is_aggregator_url, compute_quality_score
+from modules.crawler import crawl_website_http, resolve_aggregator_landing_page
 from modules.sheets import check_webhook_status, sync_to_google_sheet
 from modules.maps import (
     JS_PARSE_LIST_CARDS,
@@ -265,22 +265,34 @@ def run_lead_harvester(
                 b_category = card_info.get("category") or niche.title()
                 place_url = card_info.get("maps_url") or maps_url
 
-                # Website vs Social media distinction
+                # Website vs Social media vs Aggregator resolution
                 social_profiles = []
                 final_website = "N/A"
+                b_email = "N/A"
 
                 if b_website != "N/A":
-                    if is_social_url(b_website):
+                    if is_aggregator_url(b_website):
+                        social_profiles.append(b_website)
+                        real_site, agg_emails, agg_phones, agg_soc = resolve_aggregator_landing_page(b_website)
+                        if real_site:
+                            final_website = real_site
+                        if agg_emails and b_email == "N/A":
+                            b_email = agg_emails[0]
+                        if agg_phones and (not b_phone or b_phone == "N/A"):
+                            b_phone = agg_phones[0]
+                        for s in agg_soc:
+                            if s not in social_profiles:
+                                social_profiles.append(s)
+                    elif is_social_url(b_website):
                         social_profiles.append(b_website)
                         final_website = "N/A"
                     else:
                         final_website = b_website
 
-                # Fast Concurrent Multi-Strategy HTTP Website Crawler
-                b_email = "N/A"
+                # Fast Concurrent Multi-Strategy HTTP Website Crawler (with WHOIS Registry Fallback)
                 if final_website != "N/A":
                     found_emails, found_phones, found_soc = crawl_website_http(final_website)
-                    if found_emails:
+                    if found_emails and b_email == "N/A":
                         b_email = found_emails[0]
                     if (not b_phone or b_phone == "N/A") and found_phones:
                         b_phone = found_phones[0]

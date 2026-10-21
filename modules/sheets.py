@@ -25,7 +25,7 @@ def check_webhook_status(sheet_url: str):
             print(f"  [!] Webhook status check notice: {e}\n")
 
 
-def sync_to_google_sheet(sheet_url: str, rows: list, topic: str, sheet_id: str = None, mode: str = "append"):
+def sync_to_google_sheet(sheet_url: str, rows: list, topic: str, sheet_id: str = None, mode: str = "append", return_emails: bool = False):
     """
     Sends harvested leads payload to Google Sheets Apps Script Webhook.
     Modes:
@@ -33,7 +33,7 @@ def sync_to_google_sheet(sheet_url: str, rows: list, topic: str, sheet_id: str =
       - 'replace': rewrites the data rows with sorted quality hierarchy
     """
     if not sheet_url:
-        return sheet_id, None
+        return (sheet_id, None, {}) if return_emails else (sheet_id, None)
     try:
         payload = {
             "action": "sync",
@@ -46,7 +46,10 @@ def sync_to_google_sheet(sheet_url: str, rows: list, topic: str, sheet_id: str =
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
-                return data.get("sheet_id"), data.get("sheet_url")
+                s_id = data.get("sheet_id")
+                s_url = data.get("sheet_url")
+                disc = data.get("discovered_emails", {})
+                return (s_id, s_url, disc) if return_emails else (s_id, s_url)
     except Exception:
         pass
-    return sheet_id, None
+    return (sheet_id, None, {}) if return_emails else (sheet_id, None)

@@ -322,28 +322,49 @@ def run_lead_harvester(
                 # Real-time console table row
                 print_lead_row(lead_record)
 
-                # Real-time Google Sheets streaming
+                # Real-time Google Sheets streaming + Google Cloud Email Recovery
                 if sheet_url:
                     try:
+                        disc = {}
                         if active_sheet_id:
-                            sync_to_google_sheet(
+                            _, _, disc = sync_to_google_sheet(
                                 sheet_url,
                                 rows=[lead_record],
                                 topic=f"{niche.title()} in {location.title()}",
                                 sheet_id=active_sheet_id,
-                                mode="append"
+                                mode="append",
+                                return_emails=True
                             )
                         else:
-                            new_id, new_url = sync_to_google_sheet(
+                            new_id, new_url, disc = sync_to_google_sheet(
                                 sheet_url,
                                 rows=[lead_record],
                                 topic=f"{niche.title()} in {location.title()}",
                                 sheet_id=None,
-                                mode="append"
+                                mode="append",
+                                return_emails=True
                             )
                             if new_id:
                                 active_sheet_id = new_id
                                 active_sheet_url = new_url
+
+                        # If Google Cloud's whitelisted IP recovered an email that was blocked locally:
+                        if disc and b_name in disc:
+                            cloud_email = disc[b_name]
+                            lead_record["email"] = cloud_email
+                            lead_record["quality_score"] = compute_quality_score(
+                                name=b_name,
+                                phone=b_phone,
+                                email=cloud_email,
+                                website=final_website,
+                                rating=b_rating,
+                                address=b_address
+                            )
+                            if HAS_RICH:
+                                console.print(f"    [bold green]☁️ Google Cloud Recovered Email:[/bold green] [bold cyan]{cloud_email}[/bold cyan] [dim](Score: {lead_record['quality_score']})[/dim]")
+                            else:
+                                print(f"    [CLOUD RECOVERED] {b_name} -> {cloud_email}")
+
                     except Exception:
                         pass
 

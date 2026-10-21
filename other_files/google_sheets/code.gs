@@ -74,12 +74,16 @@ function doPost(e) {
     }
 
     const newValues = [];
+    const discoveredEmails = {};
+
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
 
       // Format Website hyperlink or NOT FOUND
       let webCell = "NOT FOUND";
+      let cleanSiteUrl = "";
       if (r.website && r.website !== "N/A" && r.website !== "NOT FOUND" && r.website.startsWith("http")) {
+        cleanSiteUrl = r.website;
         let domain = "";
         try {
           domain = r.website.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0];
@@ -89,6 +93,23 @@ function doPost(e) {
         webCell = '=HYPERLINK("' + r.website + '", "🌐 ' + (domain || "Visit Site") + '")';
       } else if (r.website && r.website !== "N/A" && r.website !== "NOT FOUND") {
         webCell = r.website;
+      }
+
+      // Google Cloud Email Recovery Fallback:
+      // If local scraper failed (residential IP block) and we are streaming (mode === "append"),
+      // use Google Cloud's whitelisted datacenter IP to fetch emails!
+      let emailVal = (r.email && r.email !== "N/A" && r.email !== "NOT FOUND") ? r.email : "NOT FOUND";
+      if (emailVal === "NOT FOUND" && cleanSiteUrl && mode === "append") {
+        try {
+          const cloudEmail = fetchEmailFromGoogleCloud(cleanSiteUrl);
+          if (cloudEmail) {
+            emailVal = cloudEmail;
+            discoveredEmails[r.business_name] = cloudEmail;
+            if (r.quality_score !== undefined && r.quality_score < 75) {
+              r.quality_score += 25;
+            }
+          }
+        } catch (cloudErr) {}
       }
 
       // Format Google Maps hyperlink or NOT FOUND
@@ -107,12 +128,11 @@ function doPost(e) {
         ratingCell = "⭐ " + r.rating + (r.reviews ? " (" + r.reviews + ")" : "");
       }
 
-      const emailVal = (r.email && r.email !== "N/A" && r.email !== "NOT FOUND") ? r.email : "NOT FOUND";
       const phoneVal = (r.phone && r.phone !== "N/A" && r.phone !== "NOT FOUND") ? r.phone : "NOT FOUND";
       const socialsVal = (r.social_profiles && r.social_profiles !== "N/A" && r.social_profiles !== "NOT FOUND") ? r.social_profiles : "NOT FOUND";
       const addressVal = (r.address && r.address !== "N/A" && r.address !== "NOT FOUND") ? r.address : "NOT FOUND";
 
-      // Column Hierarchy requested:
+      // Column Hierarchy:
       // 1: # | 2: Name | 3: Email | 4: Phone | 5: Website | 6: Category |
       // 7: Rating & Reviews | 8: Social Profiles | 9: Google Maps | 10: Address | 11: Quality Score
       newValues.push([
@@ -140,7 +160,8 @@ function doPost(e) {
       status: "success",
       sheet_id: sheetId,
       sheet_url: ss.getUrl(),
-      total_rows: sheet.getLastRow() - 2
+      total_rows: sheet.getLastRow() - 2,
+      discovered_emails: discoveredEmails
     })).setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
@@ -334,4 +355,176 @@ function formatDataRows(sheet, startRow, rowCount) {
       }
     }
   }
+}
+
+/**
+ * =========================================================================
+ *              GOOGLE CLOUD IP EMAIL EXTRACTION ENGINE
+ * Uses Google's whitelisted datacenter IPs (UrlFetchApp) to bypass Cloudflare
+ * and extract emails from websites without residential IP restrictions.
+ * =========================================================================
+ */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("✦ MapScout Tools")
+    .addItem("⚡ Scan Missing Emails via Google Cloud", "scanMissingEmailsInSheet")
+    .addToUi();
+}
+
+/**
+ * Manually scans any row in the current sheet where Email Address is "NOT FOUND"
+ * but a valid Website URL exists, using Google Cloud's whitelisted IPs.
+ */
+function scanMissingEmailsInSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 3) {
+    ss.toast("No lead data rows found to scan.", "MapScout Notice", 4);
+    return;
+  }
+
+  const range = sheet.getRange(3, 1, lastRow - 2, 11);
+  const values = range.getValues();
+  const formulas = sheet.getRange(3, 5, lastRow - 2, 1).getFormulas();
+  let recoveredCount = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    const curEmail = String(values[i][2] || "").trim();
+    if (curEmail === "NOT FOUND") {
+      let rawSite = String(values[i][4] || "").trim();
+      let formula = formulas[i][0] || "";
+
+      let siteUrl = "";
+      if (formula && formula.includes('HYPERLINK("')) {
+        const m = formula.match(/HYPERLINK\("([^"]+)"/i);
+        if (m) siteUrl = m[1];
+      } else if (rawSite.startsWith("http")) {
+        siteUrl = rawSite;
+      }
+
+      if (siteUrl && siteUrl.startsWith("http")) {
+        try {
+          const foundEmail = fetchEmailFromGoogleCloud(siteUrl);
+          if (foundEmail) {
+            const rowIndex = 3 + i;
+            const emailCell = sheet.getRange(rowIndex, 3);
+            emailCell.setValue(foundEmail);
+            emailCell.setBackground("#E6F4EA");
+            emailCell.setFontColor("#0D652D");
+            emailCell.setFontWeight("bold");
+            emailCell.setHorizontalAlignment("left");
+
+            // Bump quality score by 25 points
+            const scoreCell = sheet.getRange(rowIndex, 11);
+            const curScore = Number(scoreCell.getValue()) || 50;
+            if (curScore < 75) {
+              scoreCell.setValue(Math.min(100, curScore + 25));
+            }
+            recoveredCount++;
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  ss.toast("Scan complete! Recovered " + recoveredCount + " new emails via Google Cloud.", "MapScout Success", 6);
+}
+
+/**
+ * Fetches target website using Google Datacenter IP, decoding Cloudflare & HTML entities.
+ */
+function fetchEmailFromGoogleCloud(siteUrl) {
+  if (!siteUrl || !siteUrl.startsWith("http")) return "";
+
+  const options = {
+    muteHttpExceptions: true,
+    followRedirects: true,
+    validateHttpsCertificates: false,
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+  };
+
+  try {
+    // 1. Fetch homepage
+    const response = UrlFetchApp.fetch(siteUrl, options);
+    if (response.getResponseCode() === 200) {
+      const htmlText = response.getContentText();
+      const em = extractEmailFromHtml(htmlText);
+      if (em) return em;
+
+      // 2. Discover subpages: /contact, /about
+      const subpaths = ["/contact", "/contact-us", "/about", "/about-us"];
+      const baseClean = siteUrl.replace(/\/+$/, "");
+      for (let s = 0; s < subpaths.length; s++) {
+        try {
+          const subResp = UrlFetchApp.fetch(baseClean + subpaths[s], options);
+          if (subResp.getResponseCode() === 200) {
+            const subEm = extractEmailFromHtml(subResp.getContentText());
+            if (subEm) return subEm;
+          }
+        } catch (subErr) {}
+      }
+    }
+  } catch (err) {}
+
+  return "";
+}
+
+/**
+ * Multi-pattern email extractor for Google Apps Script (Cloudflare hex + mailto + regex).
+ */
+function extractEmailFromHtml(rawHtml) {
+  if (!rawHtml) return "";
+
+  const junkExts = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".woff"];
+  const junkSubs = ["sentry", "wix", "example.com", "yourdomain", "company.com", "your@email.com", "user@domain.com", "email@domain.com", "bootstrap", "cloudflare", "npm@", "react@"];
+
+  function isValid(email) {
+    if (!email || !email.includes("@")) return false;
+    const e = email.toLowerCase().trim().replace(/\.+$/, "");
+    for (let j = 0; j < junkExts.length; j++) {
+      if (e.endsWith(junkExts[j])) return false;
+    }
+    for (let k = 0; k < junkSubs.length; k++) {
+      if (e.includes(junkSubs[k])) return false;
+    }
+    const parts = e.split("@");
+    if (parts.length !== 2 || parts[0].length < 1 || parts[1].length < 3) return false;
+    if (!parts[1].includes(".")) return false;
+    return true;
+  }
+
+  // 1. Cloudflare hex decoding
+  const cfMatches = rawHtml.match(/data-cfemail="([a-f0-9]+)"/gi) || [];
+  for (let c = 0; c < cfMatches.length; c++) {
+    const hex = cfMatches[c].replace(/^data-cfemail="/i, "").replace(/"$/, "");
+    try {
+      const r = parseInt(hex.substr(0, 2), 16);
+      let dec = "";
+      for (let n = 2; n < hex.length; n += 2) {
+        dec += String.fromCharCode(parseInt(hex.substr(n, 2), 16) ^ r);
+      }
+      if (isValid(dec)) return dec;
+    } catch (ex) {}
+  }
+
+  // 2. Mailto anchors
+  const mailtoMatches = rawHtml.match(/mailto:([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/gi) || [];
+  for (let m = 0; m < mailtoMatches.length; m++) {
+    const rawM = mailtoMatches[m].replace(/^mailto:/i, "").split("?")[0].trim();
+    if (isValid(rawM)) return rawM;
+  }
+
+  // 3. Normalized regex search
+  const textMatches = rawHtml.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/gi) || [];
+  for (let t = 0; t < textMatches.length; t++) {
+    const e = textMatches[t].trim();
+    if (isValid(e)) return e;
+  }
+
+  return "";
 }

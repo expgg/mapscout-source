@@ -188,7 +188,7 @@ function extractWebsiteDom() {
     let socials = [];
     let contactLinks = [];
 
-    // 1. Mailto links
+    // 1. Mailto links (with URL decoding)
     document.querySelectorAll('a[href*="mailto:"]').forEach(a => {
         try {
             let raw = decodeURIComponent(a.href);
@@ -205,28 +205,68 @@ function extractWebsiteDom() {
         } catch(e) {}
     });
 
-    // 3. Socials & contact links
-    document.querySelectorAll('a[href]').forEach(a => {
+    // 3. Socials & contact links - comprehensive DOM scan across all links and data attributes
+    document.querySelectorAll('a[href], [data-href], [data-url]').forEach(el => {
         try {
-            let h = a.href;
-            let hl = h.toLowerCase();
-            if (hl.includes('facebook.com/') || hl.includes('instagram.com/') || hl.includes('linkedin.com/') || hl.includes('twitter.com/') || hl.includes('x.com/')) {
-                if (!hl.includes('/share') && !hl.includes('/intent') && !hl.includes('.jpg') && !hl.includes('.png')) {
-                    socials.push(h.split('?')[0]);
+            let h = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
+            if (!h || h.startsWith('javascript:') || h.startsWith('#')) return;
+            let fullH = h;
+            try {
+                fullH = new URL(h, window.location.href).href;
+            } catch(ex) {}
+            let hl = fullH.toLowerCase();
+
+            // Explicit LinkedIn link detection (company, school, showcase, in, personal profiles)
+            if (hl.includes('linkedin.com/')) {
+                if (!hl.includes('/sharing') && !hl.includes('/sharearticle') && !hl.includes('/share') && !hl.includes('/intent')) {
+                    socials.push(fullH.split('?')[0]);
                 }
             }
-            if (hl.includes('contact') || hl.includes('about') || hl.includes('support') || hl.includes('reach')) {
-                if (h.startsWith('http') && !contactLinks.includes(h)) {
-                    contactLinks.push(h);
+            // Explicit Facebook link detection
+            else if (hl.includes('facebook.com/') || hl.includes('fb.com/')) {
+                if (!hl.includes('/sharer') && !hl.includes('/share') && !hl.includes('/intent') && !hl.includes('/dialog')) {
+                    socials.push(fullH.split('?')[0]);
+                }
+            }
+            // Other major socials
+            else if (hl.includes('instagram.com/') || hl.includes('twitter.com/') || hl.includes('x.com/') || hl.includes('youtube.com/')) {
+                if (!hl.includes('/share') && !hl.includes('/intent') && !hl.includes('.jpg') && !hl.includes('.png')) {
+                    socials.push(fullH.split('?')[0]);
+                }
+            }
+
+            // Internal Subpages for Contact, About, Team, Leadership, Connect
+            if (hl.includes('contact') || hl.includes('about') || hl.includes('support') || hl.includes('reach') || hl.includes('team') || hl.includes('connect')) {
+                if (fullH.startsWith('http') && fullH.includes(window.location.hostname) && !contactLinks.includes(fullH) && fullH !== window.location.href) {
+                    contactLinks.push(fullH);
                 }
             }
         } catch(e) {}
     });
 
-    // 4. Inner text scan
+    // 4. Cloudflare email protection tags (<span class="__cf_email__" data-cfemail="...">)
+    document.querySelectorAll('[data-cfemail]').forEach(el => {
+        try {
+            let hex = el.getAttribute('data-cfemail');
+            if (hex) {
+                let r = parseInt(hex.substr(0, 2), 16);
+                let email = '';
+                for (let n = 2; n < hex.length; n += 2) {
+                    email += String.fromCharCode(parseInt(hex.substr(n, 2), 16) ^ r);
+                }
+                if (email && email.includes('@')) emails.push(email);
+            }
+        } catch(e) {}
+    });
+
+    // 5. Inner text regex for emails & phones
     let bodyText = document.body ? document.body.innerText : '';
     let matches = bodyText.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g) || [];
     matches.forEach(e => emails.push(e));
+
+    // Bangladeshi & international mobile number regex in body text
+    let bdPhones = bodyText.match(/(?:\+?880\s?|0)(1[3-9]\d{2}[-\s]?\d{6})\b/g) || [];
+    bdPhones.forEach(p => phones.push(p.trim()));
 
     return {
         emails: emails,
@@ -242,8 +282,10 @@ return extractWebsiteDom();
 
 def crawl_website_dynamic_window(driver, main_window, base_url: str):
     """
-    Secondary browser window fallback for dynamic React/Vue/SPA sites.
-    Guarantees clean tab closure and returns focus safely to main_window.
+    Physical browser window inspection for dynamic React/Vue/SPA sites and Cloudflare bypass.
+    Opens a new browser tab, executes Cloudflare verification if challenged,
+    extracts contact data from homepage and internal subpages (Contact/About),
+    safely closes the tab and returns focus to main_window.
     """
     discovered_emails = set()
     discovered_phones = set()
@@ -261,7 +303,7 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
         if handles_after:
             opened_tab = list(handles_after)[0]
 
-        driver.set_page_load_timeout(6.0)
+        driver.set_page_load_timeout(8.0)
 
         try:
             driver.get(base_url)
@@ -271,9 +313,21 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
             except Exception:
                 pass
 
-        time.sleep(0.9)
+        time.sleep(1.2)
 
-        # Direct in-browser JavaScript DOM extraction
+        # Detect Cloudflare Turnstile / Challenge and invoke UC mode bypass
+        try:
+            page_text = (driver.page_source or "").lower()
+            if "cloudflare" in page_text and any(k in page_text for k in ["turnstile", "challenge", "verify you are human", "just a moment", "cf-wrapper"]):
+                try:
+                    driver.uc_gui_handle_cf()
+                except Exception:
+                    pass
+                time.sleep(2.0)
+        except Exception:
+            pass
+
+        # 1. Primary DOM extraction from homepage
         dom_data = driver.execute_script(DOM_EXTRACT_JS) or {}
         for em in dom_data.get("emails", []):
             if is_valid_email(em):
@@ -285,7 +339,7 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
         for soc in dom_data.get("socials", []):
             discovered_socials.add(soc)
 
-        # Fallback to HTML parser
+        # Fallback to BeautifulSoup on raw outerHTML
         raw_html = dom_data.get("html") or ""
         if raw_html:
             em2, ph2, soc2 = extract_from_html_content(raw_html, base_url)
@@ -293,29 +347,43 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
             discovered_phones.update(ph2)
             discovered_socials.update(soc2)
 
-        # If email still not found, navigate tab to the first discovered contact page
+        # 2. Check if Email or LinkedIn is still missing: deep dive into Contact / About subpages
+        has_linkedin = any("linkedin.com" in s.lower() for s in discovered_socials)
+        has_facebook = any("facebook.com" in s.lower() or "fb.com" in s.lower() for s in discovered_socials)
         contact_links = dom_data.get("contactLinks", [])
-        if not discovered_emails and contact_links:
-            target_contact = contact_links[0]
-            try:
-                driver.get(target_contact)
-            except TimeoutException:
-                try:
-                    driver.execute_script("window.stop();")
-                except Exception:
-                    pass
-            time.sleep(0.8)
 
-            sub_dom = driver.execute_script(DOM_EXTRACT_JS) or {}
-            for em in sub_dom.get("emails", []):
-                if is_valid_email(em):
-                    discovered_emails.add(em)
-            for ph in sub_dom.get("phones", []):
-                cp = clean_phone_number(ph)
-                if cp:
-                    discovered_phones.add(cp)
-            for soc in sub_dom.get("socials", []):
-                discovered_socials.add(soc)
+        if (not discovered_emails or not has_linkedin or not has_facebook) and contact_links:
+            for subpage_url in contact_links[:2]:
+                try:
+                    driver.get(subpage_url)
+                except TimeoutException:
+                    try:
+                        driver.execute_script("window.stop();")
+                    except Exception:
+                        pass
+                time.sleep(1.0)
+
+                sub_dom = driver.execute_script(DOM_EXTRACT_JS) or {}
+                for em in sub_dom.get("emails", []):
+                    if is_valid_email(em):
+                        discovered_emails.add(em)
+                for ph in sub_dom.get("phones", []):
+                    cp = clean_phone_number(ph)
+                    if cp:
+                        discovered_phones.add(cp)
+                for soc in sub_dom.get("socials", []):
+                    discovered_socials.add(soc)
+
+                sub_html = sub_dom.get("html") or ""
+                if sub_html:
+                    em3, ph3, soc3 = extract_from_html_content(sub_html, subpage_url)
+                    discovered_emails.update(em3)
+                    discovered_phones.update(ph3)
+                    discovered_socials.update(soc3)
+
+                # If both email and linkedin are found, we don't need to check further subpages
+                if discovered_emails and any("linkedin.com" in s.lower() for s in discovered_socials):
+                    break
 
     except Exception:
         pass

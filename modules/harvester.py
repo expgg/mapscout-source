@@ -23,7 +23,11 @@ from modules.ui import (
 )
 from modules.cursor import inject_visual_cursor, move_cursor_to
 from modules.extractor import normalize_name, is_social_url, is_aggregator_url, compute_quality_score
-from modules.crawler import crawl_website_http, resolve_aggregator_landing_page
+from modules.crawler import (
+    crawl_website_http,
+    crawl_website_dynamic_window,
+    resolve_aggregator_landing_page
+)
 from modules.frog_rescue import run_screaming_frog_rescue
 from modules.sheets import check_webhook_status, sync_to_google_sheet
 from modules.maps import (
@@ -102,6 +106,7 @@ def run_lead_harvester(
 
         driver.get(maps_url)
         time.sleep(3.2)
+        main_window = driver.current_window_handle
         try:
             driver.execute_script("document.body.style.zoom = '85%';")
         except Exception:
@@ -291,9 +296,29 @@ def run_lead_harvester(
                     else:
                         final_website = b_website
 
-                # Fast Concurrent Multi-Strategy HTTP Website Crawler (with WHOIS Registry Fallback)
+                # Physical Browser Window Inspection (Bypasses Cloudflare & Loads Dynamic JavaScript/SPAs)
                 if final_website != "N/A":
-                    found_emails, found_phones, found_soc = crawl_website_http(final_website)
+                    if HAS_RICH:
+                        console.print(f"  [dim][*] Opening physical browser window tab to inspect website:[/dim] [cyan]{final_website[:45]}[/cyan]")
+                    else:
+                        print(f"  [*] Opening physical browser window tab to inspect website: {final_website[:45]}")
+
+                    found_emails, found_phones, found_soc = crawl_website_dynamic_window(driver, main_window, final_website)
+
+                    # Deep fallback: if email or LinkedIn is still missing, run concurrent HTTP spider + ICANN WHOIS
+                    has_linkedin = any("linkedin.com" in s.lower() for s in found_soc)
+                    if not found_emails or not has_linkedin:
+                        http_emails, http_phones, http_soc = crawl_website_http(final_website)
+                        for em in http_emails:
+                            if em not in found_emails:
+                                found_emails.append(em)
+                        for ph in http_phones:
+                            if ph not in found_phones:
+                                found_phones.append(ph)
+                        for sc in http_soc:
+                            if sc not in found_soc:
+                                found_soc.append(sc)
+
                     if found_emails and b_email == "N/A":
                         b_email = found_emails[0]
                     if (not b_phone or b_phone == "N/A") and found_phones:
@@ -319,7 +344,7 @@ def run_lead_harvester(
                 li_url = "NOT FOUND"
                 for s in social_profiles:
                     sl = s.lower()
-                    if "facebook.com" in sl and fb_url == "NOT FOUND":
+                    if ("facebook.com" in sl or "fb.com" in sl) and fb_url == "NOT FOUND":
                         fb_url = s
                     elif "linkedin.com" in sl and li_url == "NOT FOUND":
                         li_url = s

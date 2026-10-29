@@ -270,3 +270,103 @@ def compute_quality_score(name: str, phone: str, email: str, website: str, ratin
     if address and address != "N/A" and address != "NOT FOUND":
         score += 5
     return min(100, score)
+
+
+# ---------------------------------------------------------------------------
+# Strict Lead Relevance & Sector Verification Engine
+# ---------------------------------------------------------------------------
+
+UNIVERSAL_EXCLUSIONS = [
+    "hostel", "dormitory", "dorm", "mess hall", "residential hall",
+    "shaheed minar", "minar", "monument", "memorial", "sculpture", "statue",
+    "playground", "stadium", "canteen", "cafeteria", "cemetery", "graveyard",
+    "mosque", "masjid", "temple", "church", "students' care", "student care"
+]
+
+IT_EXCLUDED_KEYWORDS = [
+    "barista", "culinary", "chef", "cooking", "baking", "pastry",
+    "restaurant", "cafe", "coffee", "catering", "hotel management",
+    "welding", "welder", "electrician", "electrical works", "carpenter", "plumbing", "plumber",
+    "masonry", "refrigeration", "ac repair", "auto mechanic", "automobile", "driving school",
+    "driving training", "motor driving", "driving academy",
+    "mobile repair", "mobile servicing", "cell phone repair", "hardware repair", "mobile servicing center",
+    "tailoring", "tailor", "sewing", "sewing school", "garments", "fashion design",
+    "beautician", "beauty parlour", "parlour", "makeup", "salon", "cosmetology",
+    "nursing", "paramedical", "pharmacy", "medical training", "dental", "clinic", "hospital",
+    "teachers training", "teacher training", "primary training", "b.ed", "dttti", "ptti",
+    "kindergarten", "junior school", "high school", "madrasa", "cadet coaching", "admission coaching",
+    "language club", "ielts", "spoken english", "korean language", "japanese language", "german language",
+    "music school", "dance academy", "martial art", "karate", "yoga", "gym", "fitness"
+]
+
+IT_ACCEPTED_CATEGORIES = {
+    "software training institute",
+    "computer training school",
+    "computer training center",
+    "software company",
+    "web hosting company",
+    "internet marketing service"
+}
+
+IT_POSITIVE_REGEX = re.compile(
+    r"\b("
+    r"it|ict|tech|technology|technologies|software|softtech|coder|coders|coding|code|"
+    r"programmer|programming|computer|computers|computing|web|webcoder|developer|developers|development|"
+    r"cyber|cybersecurity|network|networking|cisco|ccna|data|ai|digital|multimedia|animation|"
+    r"graphic|graphics|ui\/ux|ux|freelanc\w*|outsourcing|bpo|cloud|devops|fullstack|"
+    r"frontend|backend|algorithm|algo|byte|bit|creative\s*it|basis|bitm|diit|daffodil|"
+    r"bacbon|lead\s*academy|ostad|shikhbe\s*shobai|bohubrihi|interactive\s*cares|codeman\w*|"
+    r"eiconik|astrait|uy\s*lab|peoplentech|nexttech|kaizen|nebula|atova"
+    r")\b",
+    re.IGNORECASE
+)
+
+BENGALI_IT_KEYWORDS = ["কম্পিউটার", "আইটি", "সফটওয়্যার", "প্রযুক্তি", "প্রশিক্ষণ"]
+
+
+def is_lead_relevant(name: str, category: str, niche: str, website: str = "") -> tuple[bool, str]:
+    """
+    Evaluates whether a candidate business matches the requested niche and is a valid commercial lead,
+    filtering out monuments, hostels, cafeterias, and irrelevant vocational fields.
+    """
+    norm_name = (name or "").lower().strip()
+    norm_cat = (category or "").lower().strip()
+    norm_niche = (niche or "").lower().strip()
+    norm_web = (website or "").lower().strip()
+
+    # 1. Universal Exclusions (Hostels, Monuments, Minars, Cafeterias, Parks)
+    combined_text = f"{norm_name} {norm_cat} {norm_web}"
+    for ex in UNIVERSAL_EXCLUSIONS:
+        if ex in combined_text:
+            return False, f"Universal exclusion match: '{ex}'"
+
+    is_it_niche = any(k in norm_niche for k in ["it", "tech", "computer", "software", "coding", "web", "program"])
+
+    if is_it_niche:
+        # 2. IT-Specific Exclusions (Vocational trades, non-IT academic, medical, beauty)
+        for ex in IT_EXCLUDED_KEYWORDS:
+            if ex in combined_text:
+                return False, f"Non-IT sector exclusion: '{ex}'"
+
+        # 3. IT-Specific Positive Acceptance
+        # Case A: Explicit IT Category
+        if norm_cat in IT_ACCEPTED_CATEGORIES:
+            return True, f"Direct IT category match: '{norm_cat}'"
+
+        # Case B: Bengali Script IT keywords in name
+        if any(b_kw in name for b_kw in BENGALI_IT_KEYWORDS):
+            return True, "Bengali IT keyword match in name"
+
+        # Case C: Name matches strong IT regex
+        if IT_POSITIVE_REGEX.search(norm_name):
+            return True, "IT keyword match in business name"
+
+        # Case D: Website domain matches IT keyword
+        if norm_web and norm_web != "n/a" and IT_POSITIVE_REGEX.search(norm_web):
+            return True, "IT keyword match in website domain"
+
+        # Case E: Generic training category (e.g. Training center) without ANY IT signal -> REJECT!
+        return False, f"Lacks IT domain keywords in name, category, or website (category was '{category or 'unknown'}')"
+
+    return True, "Generic niche match"
+

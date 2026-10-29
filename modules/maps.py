@@ -112,12 +112,15 @@ let fullPhone = document.querySelector('button[data-item-id*="phone"]')?.innerTe
 let fullAddr = document.querySelector('button[data-item-id="address"]')?.innerText?.trim() || '';
 let hoursEl = document.querySelector("div[data-item-id='oh']");
 let hours = hoursEl ? hoursEl.innerText.split('\\n')[0].trim() : '';
+let catEl = document.querySelector('button[jsaction*="category"], span.DkEaL, button.DkEaL, span[class*="fontBodyMedium"]');
+let curCategory = catEl ? catEl.innerText.trim() : '';
 return {
     title: curTitle,
     website: auth ? auth.href : '',
     phone: fullPhone.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
     address: fullAddr.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
-    hours: hours
+    hours: hours,
+    category: curCategory
 };
 """
 

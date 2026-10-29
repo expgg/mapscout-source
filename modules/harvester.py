@@ -22,7 +22,13 @@ from modules.ui import (
     console
 )
 from modules.cursor import inject_visual_cursor, move_cursor_to
-from modules.extractor import normalize_name, is_social_url, is_aggregator_url, compute_quality_score
+from modules.extractor import (
+    normalize_name,
+    is_social_url,
+    is_aggregator_url,
+    compute_quality_score,
+    is_lead_relevant
+)
 from modules.crawler import (
     crawl_website_http,
     crawl_website_dynamic_window,
@@ -113,6 +119,15 @@ def run_lead_harvester(
                 "Rangpur, Bangladesh",
                 "Mymensingh, Bangladesh",
                 "Bangladesh"
+            ]
+
+        # If searching tech/IT training in --all mode, expand sub-niches for maximum coverage across all directories
+        is_it_search = any(k in niche.lower() for k in ["it", "tech", "computer", "software", "coding"])
+        if is_all_mode and is_it_search and len(sub_niches) == 1:
+            sub_niches = [
+                niche.strip(),
+                "Software Training Institute",
+                "Computer Training School"
             ]
 
         queries_to_run = []
@@ -230,7 +245,16 @@ def run_lead_harvester(
                 card_info = unvisited[0]
                 b_name = card_info["name"].replace("Sponsored", "").replace("", "").strip()
                 seen_place_keys.add(card_info["name"].strip())
-                lead_index += 1
+
+                # Pre-click relevance gate (Name & List Card Category)
+                c_category = card_info.get("category", "")
+                is_rel, rel_reason = is_lead_relevant(b_name, c_category, niche)
+                if not is_rel:
+                    if HAS_RICH:
+                        console.print(f"  [dim yellow][↷ Skipped irrelevant]:[/dim yellow] [dim]{b_name[:38]} ({rel_reason})[/dim]")
+                    else:
+                        print(f"  [↷ Skipped irrelevant]: {b_name[:38]} ({rel_reason})")
+                    continue
 
                 try:
                     target_name = b_name
@@ -303,6 +327,18 @@ def run_lead_harvester(
     
                     # Laptop safeguard: restore feed if single-pane view
                     restore_feed_if_stuck(driver)
+
+                    # Post-click relevance check with full details, updated category, and website
+                    detail_category = res.get("category") or c_category
+                    is_rel_detail, rel_reason_detail = is_lead_relevant(b_name, detail_category, niche, b_website)
+                    if not is_rel_detail:
+                        if HAS_RICH:
+                            console.print(f"  [dim yellow][↷ Skipped irrelevant detail]:[/dim yellow] [dim]{b_name[:38]} ({rel_reason_detail})[/dim]")
+                        else:
+                            print(f"  [↷ Skipped irrelevant detail]: {b_name[:38]} ({rel_reason_detail})")
+                        continue
+
+                    lead_index += 1
     
                     # Format Rating and Review Count
                     b_rating_str = card_info.get("rating") or ""
@@ -318,7 +354,7 @@ def run_lead_harvester(
                     else:
                         rating_reviews_disp = "-"
     
-                    b_category = card_info.get("category") or niche.title()
+                    b_category = detail_category or card_info.get("category") or niche.title()
                     place_url = card_info.get("maps_url") or maps_url
     
                     # Website vs Social media vs Aggregator resolution

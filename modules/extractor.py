@@ -206,7 +206,14 @@ def extract_from_html_content(raw_html: str, base_url: str):
             # Social links (excluding share intents and website builder vendor accounts)
             for platform in ['linkedin.com', 'facebook.com', 'fb.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com', 'youtube.com']:
                 if platform in hl and not any(k in hl for k in ['share', 'intent', 'cdn', '.jpg', '.png', 'sharer', '/squarespace', '/shopify', '/wix', '/wordpress', '/weebly']):
-                    socials.add(h.split('?')[0].strip())
+                    clean_social = h
+                    if 'profile.php' in hl:
+                        clean_social = clean_social.split('&')[0].strip()
+                    else:
+                        clean_social = clean_social.split('?')[0].strip()
+                    if clean_social.startswith('//'):
+                        clean_social = 'https:' + clean_social
+                    socials.add(clean_social)
 
         # JSON-LD Schema (LocalBusiness, Organization, Store)
         for s in soup.find_all('script', type='application/ld+json'):
@@ -219,15 +226,42 @@ def extract_from_html_content(raw_html: str, base_url: str):
                 for item in items:
                     if isinstance(item, dict):
                         em = item.get("email")
-                        if em and is_valid_email(str(em)):
+                        if em and is_valid_email(str(em)) and 'undefined' not in str(em).lower():
                             emails.add(str(em))
                         tel = item.get("telephone") or item.get("phone")
                         if tel:
                             cp = clean_phone_number(str(tel))
-                            if cp:
+                            if cp and 'undefined' not in cp.lower():
                                 phones.add(cp)
+                        sa = item.get("sameAs", [])
+                        if isinstance(sa, str):
+                            sa = [sa]
+                        for link in sa:
+                            ll = str(link).lower()
+                            if any(p in ll for p in ['facebook.com', 'linkedin.com', 'instagram.com', 'youtube.com', 'twitter.com', 'x.com']):
+                                socials.add(str(link).strip())
             except Exception:
                 pass
+
+        # Meta tags (OG & Twitter publisher / profile links)
+        for meta in soup.find_all('meta'):
+            prop = (meta.get('property') or meta.get('name') or '').lower()
+            content = (meta.get('content') or '').strip()
+            cl = content.lower()
+            if any(p in cl for p in ['facebook.com', 'linkedin.com', 'instagram.com', 'youtube.com']):
+                if not any(k in cl for k in ['share', 'sharer', '.jpg', '.png']):
+                    socials.add(content.split('?')[0].strip())
+
+        # Facebook embedded iframes
+        for iframe in soup.find_all('iframe', src=True):
+            src = iframe['src']
+            if 'facebook.com/plugins/page.php' in src:
+                try:
+                    q = urllib.parse.parse_qs(urllib.parse.urlparse(src).query)
+                    if 'href' in q:
+                        socials.add(q['href'][0].strip())
+                except Exception:
+                    pass
 
         # Decompose non-visible script, style, svg tags to prevent phantom matches
         for tag in soup(["script", "style", "noscript", "svg"]):

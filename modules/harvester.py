@@ -268,14 +268,14 @@ def run_lead_harvester(
                     driver.execute_script(JS_CLICK_CARD, target_href, target_name)
     
                     # 3. Synchronized polling (up to 1.1s) — STRICT VERIFICATION: ONLY accept details if title matches THIS exact business!
-                    b_website = "N/A"
+                    b_website = card_info.get("website") or "N/A"
                     b_phone = card_info.get("phone") or "N/A"
                     b_address = card_info.get("address") or "N/A"
                     b_status = card_info.get("status") or "N/A"
     
                     t_poll = time.time()
                     first_match_t = None
-                    while time.time() - t_poll < 1.1:
+                    while time.time() - t_poll < 1.8:
                         res = driver.execute_script(JS_POLL_DETAILS)
                         cur_title = res.get("title", "")
                         norm_cur = normalize_name(cur_title)
@@ -361,6 +361,11 @@ def run_lead_harvester(
                     social_profiles = []
                     final_website = "N/A"
                     b_email = "N/A"
+
+                    # 1. Ingest any social profiles found directly in Google Maps place overview
+                    for gm_soc in res.get("socials", []):
+                        if gm_soc not in social_profiles:
+                            social_profiles.append(gm_soc)
     
                     if b_website != "N/A":
                         if is_aggregator_url(b_website):
@@ -391,8 +396,9 @@ def run_lead_harvester(
                         found_emails, found_phones, found_soc = crawl_website_dynamic_window(driver, main_window, final_website)
     
                         # Deep fallback: if email or LinkedIn is still missing, run concurrent HTTP spider + ICANN WHOIS
-                        has_linkedin = any("linkedin.com" in s.lower() for s in found_soc)
-                        if not found_emails or not has_linkedin:
+                        has_linkedin = any("linkedin.com" in s.lower() for s in found_soc + social_profiles)
+                        has_facebook = any("facebook.com" in s.lower() or "fb.com" in s.lower() for s in found_soc + social_profiles)
+                        if not found_emails or not has_linkedin or not has_facebook:
                             http_emails, http_phones, http_soc = crawl_website_http(final_website)
                             for em in http_emails:
                                 if em not in found_emails:

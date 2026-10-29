@@ -55,6 +55,17 @@ function parseFeedCards() {
             }
         }
 
+        let cardWebsite = '';
+        let cardWebEl = c.querySelector('a[data-value*="Website" i], a[aria-label*="Website" i], a.lcr4fd[href^="http"]:not([href*="google.com"])');
+        if (cardWebEl && cardWebEl.href) {
+            cardWebsite = cardWebEl.href;
+            if (cardWebsite.includes('/url?q=')) {
+                try {
+                    cardWebsite = decodeURIComponent(cardWebsite.split('/url?q=')[1].split('&')[0]);
+                } catch(e) {}
+            }
+        }
+
         results.push({
             index: idx,
             name: name,
@@ -64,7 +75,8 @@ function parseFeedCards() {
             address: address,
             phone: phone,
             status: status,
-            maps_url: mapsUrl
+            maps_url: mapsUrl,
+            website: cardWebsite
         });
     });
     return results;
@@ -75,6 +87,8 @@ return parseFeedCards();
 JS_PURGE_DOM = """
 let auth = document.querySelector('a[data-item-id="authority"]');
 if (auth) auth.remove();
+let chips = document.querySelectorAll('a.lcr4fd[aria-label*="website" i]');
+chips.forEach(c => c.remove());
 let h1 = document.querySelector('h1.DUwDvf');
 if (h1) h1.innerText = '';
 """
@@ -107,20 +121,66 @@ if (targetLink) targetLink.click();
 JS_POLL_DETAILS = """
 let h1 = document.querySelector('h1.DUwDvf');
 let curTitle = h1 ? h1.innerText.trim() : '';
+
+// 1. Multi-strategy Website detection in Google Maps pane
+let websiteUrl = '';
 let auth = document.querySelector('a[data-item-id="authority"]');
+if (auth && auth.href && !auth.href.includes('google.com/maps')) {
+    websiteUrl = auth.href;
+}
+if (!websiteUrl) {
+    let actionChip = document.querySelector('a.lcr4fd[aria-label*="website" i], a[data-tooltip*="website" i], a[aria-label*="website" i], a[data-value*="Website" i]');
+    if (actionChip && actionChip.href && !actionChip.href.includes('google.com/maps')) {
+        websiteUrl = actionChip.href;
+    }
+}
+if (!websiteUrl) {
+    let allLinks = Array.from(document.querySelectorAll('div[role="main"] a, div.m6QErb a'));
+    for (let l of allLinks) {
+        let txt = (l.innerText || '').trim().toLowerCase();
+        let aria = (l.getAttribute('aria-label') || '').toLowerCase();
+        if ((txt.includes('website') || aria.includes('website')) && l.href && !l.href.includes('google.com/maps')) {
+            websiteUrl = l.href;
+            break;
+        }
+    }
+}
+if (websiteUrl && websiteUrl.includes('/url?q=')) {
+    try {
+        websiteUrl = decodeURIComponent(websiteUrl.split('/url?q=')[1].split('&')[0]);
+    } catch(e) {}
+}
+
+// 2. Direct Social Media profile detection in Google Maps pane
+let gmapsSocials = [];
+let paneLinks = document.querySelectorAll('div[role="main"] a, div.m6QErb a');
+paneLinks.forEach(a => {
+    let h = a.href || '';
+    if (!h) return;
+    let hl = h.toLowerCase();
+    if (hl.includes('facebook.com/') || hl.includes('fb.com/') || hl.includes('linkedin.com/') ||
+        hl.includes('instagram.com/') || hl.includes('twitter.com/') || hl.includes('x.com/') ||
+        hl.includes('youtube.com/')) {
+        if (!hl.includes('/share') && !hl.includes('google.com')) {
+            gmapsSocials.push(h);
+        }
+    }
+});
+
 let fullPhone = document.querySelector('button[data-item-id*="phone"]')?.innerText?.trim() || '';
 let fullAddr = document.querySelector('button[data-item-id="address"]')?.innerText?.trim() || '';
 let hoursEl = document.querySelector("div[data-item-id='oh']");
-let hours = hoursEl ? hoursEl.innerText.split('\\n')[0].trim() : '';
+let hours = hoursEl ? hoursEl.innerText.split('\n')[0].trim() : '';
 let catEl = document.querySelector('button[jsaction*="category"], span.DkEaL, button.DkEaL, span[class*="fontBodyMedium"]');
 let curCategory = catEl ? catEl.innerText.trim() : '';
 return {
     title: curTitle,
-    website: auth ? auth.href : '',
-    phone: fullPhone.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
-    address: fullAddr.replace(/^[\\s\\ue000-\\uf8ff]+/, '').trim(),
+    website: websiteUrl,
+    phone: fullPhone.replace(/^[\s\ue000-\uf8ff]+/, '').trim(),
+    address: fullAddr.replace(/^[\s\ue000-\uf8ff]+/, '').trim(),
     hours: hours,
-    category: curCategory
+    category: curCategory,
+    socials: gmapsSocials
 };
 """
 

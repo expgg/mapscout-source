@@ -50,7 +50,7 @@ def crawl_website_http(base_url: str):
         # Step 1: Fetch homepage with clean session
         with requests.Session() as session:
             session.headers.update(http_headers)
-            resp = session.get(base_url, timeout=(2.5, 3.5), verify=False)
+            resp = session.get(base_url, timeout=(5.0, 7.0), verify=False)
             if resp.status_code == 200:
                 em, ph, soc = extract_from_html_content(resp.text, base_url)
                 discovered_emails.update(em)
@@ -98,7 +98,7 @@ def crawl_website_http(base_url: str):
         try:
             with requests.Session() as s:
                 s.headers.update(http_headers)
-                r = s.get(url, timeout=(2.0, 3.0), verify=False)
+                r = s.get(url, timeout=(4.0, 6.0), verify=False)
                 if r.status_code == 200:
                     return extract_from_html_content(r.text, url)
         except Exception:
@@ -188,63 +188,110 @@ function extractWebsiteDom() {
     let socials = [];
     let contactLinks = [];
 
-    // 1. Mailto links (with URL decoding)
+    // Helper to sanitize & push social URL
+    function addSocial(url) {
+        if (!url) return;
+        let u = url.trim();
+        if (u.startsWith('//')) u = 'https:' + u;
+        if (!u.startsWith('http')) return;
+        let ul = u.toLowerCase();
+        if (ul.includes('facebook.com/') || ul.includes('fb.com/')) {
+            if (!ul.includes('/sharer') && !ul.includes('/share') && !ul.includes('/intent') && !ul.includes('/dialog')) {
+                if (ul.includes('profile.php')) {
+                    socials.push(u.split('&')[0]);
+                } else {
+                    socials.push(u.split('?')[0]);
+                }
+            }
+        } else if (ul.includes('linkedin.com/')) {
+            if (!ul.includes('/sharing') && !ul.includes('/sharearticle') && !ul.includes('/share') && !ul.includes('/intent')) {
+                socials.push(u.split('?')[0]);
+            }
+        } else if (ul.includes('instagram.com/') || ul.includes('twitter.com/') || ul.includes('x.com/') || ul.includes('youtube.com/')) {
+            if (!ul.includes('/share') && !ul.includes('/intent') && !ul.includes('.jpg') && !ul.includes('.png')) {
+                socials.push(u.split('?')[0]);
+            }
+        }
+    }
+
+    // 1. Mailto & Tel links
     document.querySelectorAll('a[href*="mailto:"]').forEach(a => {
         try {
             let raw = decodeURIComponent(a.href);
             let m = raw.replace(/^.*?mailto:/i, '').split('?')[0].trim();
-            if (m && m.includes('@')) emails.push(m);
+            if (m && m.includes('@') && !m.toLowerCase().includes('undefined')) emails.push(m);
         } catch(e) {}
     });
 
-    // 2. Tel links
     document.querySelectorAll('a[href*="tel:"]').forEach(a => {
         try {
             let t = a.href.replace(/^.*?tel:/i, '').split('?')[0].trim();
-            if (t) phones.push(t);
+            if (t && !t.toLowerCase().includes('undefined')) phones.push(t);
         } catch(e) {}
     });
 
-    // 3. Socials & contact links - comprehensive DOM scan across all links and data attributes
-    document.querySelectorAll('a[href], [data-href], [data-url]').forEach(el => {
+    // 2. All interactive links, buttons, and elements
+    document.querySelectorAll('a[href], area[href], [data-href], [data-url], button[onclick], div[onclick], i[onclick], span[onclick]').forEach(el => {
         try {
             let h = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
-            if (!h || h.startsWith('javascript:') || h.startsWith('#')) return;
-            let fullH = h;
-            try {
-                fullH = new URL(h, window.location.href).href;
-            } catch(ex) {}
-            let hl = fullH.toLowerCase();
+            if (h && !h.startsWith('javascript:') && !h.startsWith('#')) {
+                let fullH = h;
+                try { fullH = new URL(h, window.location.href).href; } catch(ex) {}
+                addSocial(fullH);
 
-            // Explicit LinkedIn link detection (company, school, showcase, in, personal profiles)
-            if (hl.includes('linkedin.com/')) {
-                if (!hl.includes('/sharing') && !hl.includes('/sharearticle') && !hl.includes('/share') && !hl.includes('/intent')) {
-                    socials.push(fullH.split('?')[0]);
-                }
-            }
-            // Explicit Facebook link detection
-            else if (hl.includes('facebook.com/') || hl.includes('fb.com/')) {
-                if (!hl.includes('/sharer') && !hl.includes('/share') && !hl.includes('/intent') && !hl.includes('/dialog')) {
-                    socials.push(fullH.split('?')[0]);
-                }
-            }
-            // Other major socials
-            else if (hl.includes('instagram.com/') || hl.includes('twitter.com/') || hl.includes('x.com/') || hl.includes('youtube.com/')) {
-                if (!hl.includes('/share') && !hl.includes('/intent') && !hl.includes('.jpg') && !hl.includes('.png')) {
-                    socials.push(fullH.split('?')[0]);
+                let hl = fullH.toLowerCase();
+                if (hl.includes('contact') || hl.includes('about') || hl.includes('support') || hl.includes('reach') || hl.includes('team') || hl.includes('connect')) {
+                    if (fullH.startsWith('http') && fullH.includes(window.location.hostname) && !contactLinks.includes(fullH) && fullH !== window.location.href) {
+                        contactLinks.push(fullH);
+                    }
                 }
             }
 
-            // Internal Subpages for Contact, About, Team, Leadership, Connect
-            if (hl.includes('contact') || hl.includes('about') || hl.includes('support') || hl.includes('reach') || hl.includes('team') || hl.includes('connect')) {
-                if (fullH.startsWith('http') && fullH.includes(window.location.hostname) && !contactLinks.includes(fullH) && fullH !== window.location.href) {
-                    contactLinks.push(fullH);
-                }
+            // Check onclick attribute string
+            let oc = el.getAttribute('onclick') || '';
+            if (oc && (oc.includes('facebook.com') || oc.includes('linkedin.com') || oc.includes('instagram.com') || oc.includes('youtube.com'))) {
+                let m = oc.match(/https?:\/\/[^'"\s)]+/);
+                if (m) addSocial(m[0]);
             }
         } catch(e) {}
     });
 
-    // 4. Cloudflare email protection tags (<span class="__cf_email__" data-cfemail="...">)
+    // 3. Schema.org JSON-LD sameAs & contacts
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+        try {
+            let data = JSON.parse(s.innerText || '{}');
+            let items = Array.isArray(data) ? data : [data];
+            if (data['@graph'] && Array.isArray(data['@graph'])) items = items.concat(data['@graph']);
+            items.forEach(it => {
+                if (it && typeof it === 'object') {
+                    let sa = it.sameAs || [];
+                    if (typeof sa === 'string') sa = [sa];
+                    sa.forEach(link => addSocial(link));
+                    if (it.email && typeof it.email === 'string' && it.email.includes('@')) emails.push(it.email);
+                    if (it.telephone && typeof it.telephone === 'string') phones.push(it.telephone);
+                }
+            });
+        } catch(e) {}
+    });
+
+    // 4. Meta tags (OG & Twitter publisher/profile tags)
+    document.querySelectorAll('meta[property], meta[name]').forEach(m => {
+        try {
+            let content = m.getAttribute('content') || '';
+            if (content.startsWith('http')) addSocial(content);
+        } catch(e) {}
+    });
+
+    // 5. Facebook iframe embeds
+    document.querySelectorAll('iframe[src*="facebook.com"]').forEach(f => {
+        try {
+            let src = f.getAttribute('src') || '';
+            let m = src.match(/href=([^&]+)/);
+            if (m) addSocial(decodeURIComponent(m[1]));
+        } catch(e) {}
+    });
+
+    // 6. Cloudflare email protection tags
     document.querySelectorAll('[data-cfemail]').forEach(el => {
         try {
             let hex = el.getAttribute('data-cfemail');
@@ -259,20 +306,21 @@ function extractWebsiteDom() {
         } catch(e) {}
     });
 
-    // 5. Inner text regex for emails & phones
+    // 7. Visible body text regex for emails & phones
     let bodyText = document.body ? document.body.innerText : '';
     let matches = bodyText.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g) || [];
-    matches.forEach(e => emails.push(e));
+    matches.forEach(e => {
+        if (!e.toLowerCase().includes('undefined')) emails.push(e);
+    });
 
-    // Bangladeshi & international mobile number regex in body text
     let bdPhones = bodyText.match(/(?:\+?880\s?|0)(1[3-9]\d{2}[-\s]?\d{6})\b/g) || [];
     bdPhones.forEach(p => phones.push(p.trim()));
 
     return {
-        emails: emails,
-        phones: phones,
-        socials: socials,
-        contactLinks: contactLinks,
+        emails: Array.from(new Set(emails)),
+        phones: Array.from(new Set(phones)),
+        socials: Array.from(new Set(socials)),
+        contactLinks: Array.from(new Set(contactLinks)),
         html: document.documentElement.outerHTML
     };
 }
@@ -303,7 +351,7 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
         if handles_after:
             opened_tab = list(handles_after)[0]
 
-        driver.set_page_load_timeout(8.0)
+        driver.set_page_load_timeout(15.0)
 
         try:
             driver.get(base_url)
@@ -312,8 +360,19 @@ def crawl_website_dynamic_window(driver, main_window, base_url: str):
                 driver.execute_script("window.stop();")
             except Exception:
                 pass
+        except Exception:
+            pass
 
-        time.sleep(1.2)
+        time.sleep(1.5)
+
+        # Scroll to middle then bottom to trigger lazy-loaded footers & hydration
+        try:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
+            time.sleep(0.5)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(0.8)
+        except Exception:
+            pass
 
         # Detect Cloudflare Turnstile / Challenge and invoke UC mode bypass
         try:

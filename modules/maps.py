@@ -123,32 +123,88 @@ return {
 
 
 # ---------------------------------------------------------------------------
-# Helper Functions
+# Helper Functions & Anti-Bot Protections
 # ---------------------------------------------------------------------------
+
+def check_and_handle_google_captcha(driver) -> bool:
+    """
+    Detects Google Search/Maps 'unusual traffic' block, consent walls, or reCAPTCHA challenge,
+    and automatically invokes SeleniumBase UC mode captcha solvers.
+    """
+    try:
+        page_source = (driver.page_source or "").lower()
+        title = (driver.title or "").lower()
+        current_url = (driver.current_url or "").lower()
+
+        is_blocked = (
+            "unusual traffic" in page_source
+            or "recaptcha" in page_source
+            or "robot" in title
+            or "sorry/index" in current_url
+            or "before you continue to google" in page_source
+        )
+
+        if is_blocked:
+            try:
+                # 1. Attempt consent click if it's a consent wall
+                consent_btns = driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "button[aria-label*='Accept all' i], form[action*='consent'] button, button#L2AGLb"
+                )
+                if consent_btns:
+                    consent_btns[0].click()
+                    time.sleep(2.0)
+                    return True
+
+                # 2. SeleniumBase UC GUI captcha solvers for reCAPTCHA / Cloudflare
+                if hasattr(driver, "uc_gui_handle_captcha"):
+                    driver.uc_gui_handle_captcha()
+                elif hasattr(driver, "uc_gui_click_captcha"):
+                    driver.uc_gui_click_captcha()
+                time.sleep(3.0)
+                return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
 
 def is_end_of_feed(driver) -> bool:
     """Checks whether the feed container displays the 'reached the end of list' indicator."""
     try:
-        elements = driver.find_elements(By.CSS_SELECTOR, "div.HlvSq")
-        for el in elements:
-            t = el.text.lower()
-            if "reached the end of the list" in t or "no more results" in t or "end of results" in t:
-                return True
+        # Check text in feed footer and dedicated end-of-list badges
+        return bool(driver.execute_script("""
+            const feed = document.querySelector('div[role="feed"]');
+            if (!feed) return false;
+            const text = feed.innerText.toLowerCase();
+            return text.includes("reached the end of the list") || 
+                   text.includes("no more results") || 
+                   text.includes("end of results") ||
+                   Boolean(document.querySelector('div.HlvSq, span.HlvSq, div.fontBodySmall.HlvSq'));
+        """))
     except Exception:
         pass
     return False
 
 
 def scroll_feed(driver):
-    """Smoothly scrolls the Google Maps results feed container."""
+    """
+    Smoothly scrolls the Google Maps results feed container to the bottom to trigger next batch,
+    with lazy-loading jiggle to force Google's dynamic loader.
+    """
     try:
         driver.execute_script("""
             const feed = document.querySelector('div[role="feed"]');
             if (feed) {
-                feed.scrollBy({ top: 900, behavior: 'smooth' });
+                // Jiggle scroll to force Google Maps lazy-load trigger
+                feed.scrollTop = feed.scrollHeight - 350;
+                setTimeout(() => {
+                    feed.scrollTop = feed.scrollHeight;
+                }, 120);
             }
         """)
-        time.sleep(0.7)
+        time.sleep(1.2)
     except Exception:
         pass
 

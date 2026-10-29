@@ -86,6 +86,13 @@ def get_profile_dir() -> str:
     """Returns path for Chrome profile inside junk_files/chrome_profile to keep root clean."""
     p = os.path.join(get_junk_dir(), "chrome_profile")
     os.makedirs(p, exist_ok=True)
+    for lock in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+        lf = os.path.join(p, lock)
+        if os.path.exists(lf):
+            try:
+                os.remove(lf)
+            except Exception:
+                pass
     return p
 
 

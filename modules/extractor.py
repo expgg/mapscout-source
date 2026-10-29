@@ -30,13 +30,16 @@ def clean_phone_number(raw: str) -> str:
     """Cleans raw string into standard phone formatting."""
     if not raw:
         return ""
-    digits = re.sub(r'\D', '', raw)
-    if len(digits) == 10:
+    raw_clean = raw.strip()
+    if raw_clean.startswith("+") or raw_clean.startswith("01") or "+88" in raw_clean:
+        return raw_clean
+    digits = re.sub(r'\D', '', raw_clean)
+    if len(digits) == 10 and not raw_clean.startswith("0"):
         return f"+1 ({digits[:3]}) {digits[3:6]}-{digits[6:]}"
     elif len(digits) == 11 and digits.startswith("1"):
         return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
-    elif len(digits) >= 10:
-        return raw.strip()
+    elif len(digits) >= 7:
+        return raw_clean
     return ""
 
 
@@ -201,9 +204,16 @@ def extract_from_html_content(raw_html: str, base_url: str):
                     phones.add(tel_val)
 
             # Social links (excluding share intents and website builder vendor accounts)
-            for platform in ['linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com']:
+            for platform in ['linkedin.com', 'facebook.com', 'fb.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com', 'youtube.com']:
                 if platform in hl and not any(k in hl for k in ['share', 'intent', 'cdn', '.jpg', '.png', 'sharer', '/squarespace', '/shopify', '/wix', '/wordpress', '/weebly']):
-                    socials.add(h.split('?')[0].strip())
+                    clean_social = h
+                    if 'profile.php' in hl:
+                        clean_social = clean_social.split('&')[0].strip()
+                    else:
+                        clean_social = clean_social.split('?')[0].strip()
+                    if clean_social.startswith('//'):
+                        clean_social = 'https:' + clean_social
+                    socials.add(clean_social)
 
         # JSON-LD Schema (LocalBusiness, Organization, Store)
         for s in soup.find_all('script', type='application/ld+json'):
@@ -216,15 +226,42 @@ def extract_from_html_content(raw_html: str, base_url: str):
                 for item in items:
                     if isinstance(item, dict):
                         em = item.get("email")
-                        if em and is_valid_email(str(em)):
+                        if em and is_valid_email(str(em)) and 'undefined' not in str(em).lower():
                             emails.add(str(em))
                         tel = item.get("telephone") or item.get("phone")
                         if tel:
                             cp = clean_phone_number(str(tel))
-                            if cp:
+                            if cp and 'undefined' not in cp.lower():
                                 phones.add(cp)
+                        sa = item.get("sameAs", [])
+                        if isinstance(sa, str):
+                            sa = [sa]
+                        for link in sa:
+                            ll = str(link).lower()
+                            if any(p in ll for p in ['facebook.com', 'linkedin.com', 'instagram.com', 'youtube.com', 'twitter.com', 'x.com']):
+                                socials.add(str(link).strip())
             except Exception:
                 pass
+
+        # Meta tags (OG & Twitter publisher / profile links)
+        for meta in soup.find_all('meta'):
+            prop = (meta.get('property') or meta.get('name') or '').lower()
+            content = (meta.get('content') or '').strip()
+            cl = content.lower()
+            if any(p in cl for p in ['facebook.com', 'linkedin.com', 'instagram.com', 'youtube.com']):
+                if not any(k in cl for k in ['share', 'sharer', '.jpg', '.png']):
+                    socials.add(content.split('?')[0].strip())
+
+        # Facebook embedded iframes
+        for iframe in soup.find_all('iframe', src=True):
+            src = iframe['src']
+            if 'facebook.com/plugins/page.php' in src:
+                try:
+                    q = urllib.parse.parse_qs(urllib.parse.urlparse(src).query)
+                    if 'href' in q:
+                        socials.add(q['href'][0].strip())
+                except Exception:
+                    pass
 
         # Decompose non-visible script, style, svg tags to prevent phantom matches
         for tag in soup(["script", "style", "noscript", "svg"]):
@@ -242,10 +279,13 @@ def extract_from_html_content(raw_html: str, base_url: str):
         if is_valid_email(match):
             emails.add(match.strip().rstrip('.'))
 
-    # 6. Regex phone numbers from visible text
+    # 6. Regex phone numbers from visible text (North American and Bangladeshi/International)
     for m in PHONE_REGEX.finditer(visible_text):
         p_str = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
         phones.add(p_str)
+
+    for m in re.finditer(r'(?:\+?880\s?|0)(1[3-9]\d{2}[-\s]?\d{6})\b', visible_text):
+        phones.add(f"+880 {m.group(1)}")
 
     return emails, phones, socials
 
@@ -264,3 +304,103 @@ def compute_quality_score(name: str, phone: str, email: str, website: str, ratin
     if address and address != "N/A" and address != "NOT FOUND":
         score += 5
     return min(100, score)
+
+
+# ---------------------------------------------------------------------------
+# Strict Lead Relevance & Sector Verification Engine
+# ---------------------------------------------------------------------------
+
+UNIVERSAL_EXCLUSIONS = [
+    "hostel", "dormitory", "dorm", "mess hall", "residential hall",
+    "shaheed minar", "minar", "monument", "memorial", "sculpture", "statue",
+    "playground", "stadium", "canteen", "cafeteria", "cemetery", "graveyard",
+    "mosque", "masjid", "temple", "church", "students' care", "student care"
+]
+
+IT_EXCLUDED_KEYWORDS = [
+    "barista", "culinary", "chef", "cooking", "baking", "pastry",
+    "restaurant", "cafe", "coffee", "catering", "hotel management",
+    "welding", "welder", "electrician", "electrical works", "carpenter", "plumbing", "plumber",
+    "masonry", "refrigeration", "ac repair", "auto mechanic", "automobile", "driving school",
+    "driving training", "motor driving", "driving academy",
+    "mobile repair", "mobile servicing", "cell phone repair", "hardware repair", "mobile servicing center",
+    "tailoring", "tailor", "sewing", "sewing school", "garments", "fashion design",
+    "beautician", "beauty parlour", "parlour", "makeup", "salon", "cosmetology",
+    "nursing", "paramedical", "pharmacy", "medical training", "dental", "clinic", "hospital",
+    "teachers training", "teacher training", "primary training", "b.ed", "dttti", "ptti",
+    "kindergarten", "junior school", "high school", "madrasa", "cadet coaching", "admission coaching",
+    "language club", "ielts", "spoken english", "korean language", "japanese language", "german language",
+    "music school", "dance academy", "martial art", "karate", "yoga", "gym", "fitness"
+]
+
+IT_ACCEPTED_CATEGORIES = {
+    "software training institute",
+    "computer training school",
+    "computer training center",
+    "software company",
+    "web hosting company",
+    "internet marketing service"
+}
+
+IT_POSITIVE_REGEX = re.compile(
+    r"\b("
+    r"it|ict|tech|technology|technologies|software|softtech|coder|coders|coding|code|"
+    r"programmer|programming|computer|computers|computing|web|webcoder|developer|developers|development|"
+    r"cyber|cybersecurity|network|networking|cisco|ccna|data|ai|digital|multimedia|animation|"
+    r"graphic|graphics|ui\/ux|ux|freelanc\w*|outsourcing|bpo|cloud|devops|fullstack|"
+    r"frontend|backend|algorithm|algo|byte|bit|creative\s*it|basis|bitm|diit|daffodil|"
+    r"bacbon|lead\s*academy|ostad|shikhbe\s*shobai|bohubrihi|interactive\s*cares|codeman\w*|"
+    r"eiconik|astrait|uy\s*lab|peoplentech|nexttech|kaizen|nebula|atova"
+    r")\b",
+    re.IGNORECASE
+)
+
+BENGALI_IT_KEYWORDS = ["কম্পিউটার", "আইটি", "সফটওয়্যার", "প্রযুক্তি", "প্রশিক্ষণ"]
+
+
+def is_lead_relevant(name: str, category: str, niche: str, website: str = "") -> tuple[bool, str]:
+    """
+    Evaluates whether a candidate business matches the requested niche and is a valid commercial lead,
+    filtering out monuments, hostels, cafeterias, and irrelevant vocational fields.
+    """
+    norm_name = (name or "").lower().strip()
+    norm_cat = (category or "").lower().strip()
+    norm_niche = (niche or "").lower().strip()
+    norm_web = (website or "").lower().strip()
+
+    # 1. Universal Exclusions (Hostels, Monuments, Minars, Cafeterias, Parks)
+    combined_text = f"{norm_name} {norm_cat} {norm_web}"
+    for ex in UNIVERSAL_EXCLUSIONS:
+        if ex in combined_text:
+            return False, f"Universal exclusion match: '{ex}'"
+
+    is_it_niche = any(k in norm_niche for k in ["it", "tech", "computer", "software", "coding", "web", "program"])
+
+    if is_it_niche:
+        # 2. IT-Specific Exclusions (Vocational trades, non-IT academic, medical, beauty)
+        for ex in IT_EXCLUDED_KEYWORDS:
+            if ex in combined_text:
+                return False, f"Non-IT sector exclusion: '{ex}'"
+
+        # 3. IT-Specific Positive Acceptance
+        # Case A: Explicit IT Category
+        if norm_cat in IT_ACCEPTED_CATEGORIES:
+            return True, f"Direct IT category match: '{norm_cat}'"
+
+        # Case B: Bengali Script IT keywords in name
+        if any(b_kw in name for b_kw in BENGALI_IT_KEYWORDS):
+            return True, "Bengali IT keyword match in name"
+
+        # Case C: Name matches strong IT regex
+        if IT_POSITIVE_REGEX.search(norm_name):
+            return True, "IT keyword match in business name"
+
+        # Case D: Website domain matches IT keyword
+        if norm_web and norm_web != "n/a" and IT_POSITIVE_REGEX.search(norm_web):
+            return True, "IT keyword match in website domain"
+
+        # Case E: Generic training category (e.g. Training center) without ANY IT signal -> REJECT!
+        return False, f"Lacks IT domain keywords in name, category, or website (category was '{category or 'unknown'}')"
+
+    return True, "Generic niche match"
+

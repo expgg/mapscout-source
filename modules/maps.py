@@ -118,7 +118,7 @@ if (!targetLink) {
 if (targetLink) targetLink.click();
 """
 
-JS_POLL_DETAILS = """
+JS_POLL_DETAILS = r"""
 let h1 = document.querySelector('h1.DUwDvf');
 let curTitle = h1 ? h1.innerText.trim() : '';
 

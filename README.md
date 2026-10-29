@@ -231,7 +231,8 @@ mapscout/
 
 ---
 
-## 👤 Author & Credits
+## 👤 Author & Contributors
 
-**Engineered by:** Al Hossain Rifat  
+* **Lead Engineer:** [Al Hossain Rifat](https://github.com/expgg) (`@expgg`)
+* **Core Contributor:** [`@rifatlovescat`](https://github.com/rifatlovescat) — Dynamic sheet formatting, anti-bot protection & dedicated social columns
 * **Disclaimer**: *This project is developed for educational, data analysis, and authorized lead generation purposes.*

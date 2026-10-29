@@ -314,6 +314,16 @@ def run_lead_harvester(
                     address=b_address
                 )
 
+                # Extract dedicated Facebook and LinkedIn URLs
+                fb_url = "NOT FOUND"
+                li_url = "NOT FOUND"
+                for s in social_profiles:
+                    sl = s.lower()
+                    if "facebook.com" in sl and fb_url == "NOT FOUND":
+                        fb_url = s
+                    elif "linkedin.com" in sl and li_url == "NOT FOUND":
+                        li_url = s
+
                 lead_record = {
                     "rank": lead_index,
                     "business_name": b_name,
@@ -323,6 +333,8 @@ def run_lead_harvester(
                     "category": b_category,
                     "rating_reviews": rating_reviews_disp if rating_reviews_disp != "-" else "NOT FOUND",
                     "social_profiles": socials_str if socials_str != "N/A" else "NOT FOUND",
+                    "facebook": fb_url,
+                    "linkedin": li_url,
                     "maps_url": place_url,
                     "address": b_address if b_address != "N/A" else "NOT FOUND",
                     "quality_score": quality_score,
@@ -421,21 +433,23 @@ def run_lead_harvester(
 
             rename_map = {
                 "rank": "#",
-                "business_name": "Business Name",
-                "email": "Email Address",
+                "business_name": "Company Name",
+                "email": "Email",
                 "phone": "Phone Number",
-                "website": "Website",
+                "address": "Location",
+                "facebook": "Company Facebook Page Link",
+                "linkedin": "Company Linkedin Page Link",
+                "website": "Company Website",
                 "category": "Category",
                 "rating_reviews": "Rating & Reviews",
                 "social_profiles": "Social Profiles",
                 "maps_url": "Google Maps Link",
-                "address": "Full Address",
                 "quality_score": "Lead Quality Score"
             }
             ordered_cols = [
-                "#", "Business Name", "Email Address", "Phone Number", "Website",
-                "Category", "Rating & Reviews", "Social Profiles", "Google Maps Link",
-                "Full Address", "Lead Quality Score"
+                "#", "Company Name", "Phone Number", "Email", "Location",
+                "Company Facebook Page Link", "Company Linkedin Page Link", "Company Website",
+                "Category", "Rating & Reviews", "Google Maps Link", "Lead Quality Score"
             ]
 
             export_df = df.rename(columns=rename_map)
@@ -464,7 +478,19 @@ def run_lead_harvester(
     finally:
         if HAS_RICH:
             console.print("[dim][*] Closing browser session cleanly...[/dim]")
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+        # Clean profile locks to allow immediate consecutive runs
+        try:
+            for lock in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+                lf = os.path.join(profile_dir, lock)
+                if os.path.exists(lf):
+                    os.remove(lf)
+        except Exception:
+            pass
 
         # Keep root folder spotless by isolating any seleniumbase downloaded_files into junk_files
         try:

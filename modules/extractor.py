@@ -30,13 +30,16 @@ def clean_phone_number(raw: str) -> str:
     """Cleans raw string into standard phone formatting."""
     if not raw:
         return ""
-    digits = re.sub(r'\D', '', raw)
-    if len(digits) == 10:
+    raw_clean = raw.strip()
+    if raw_clean.startswith("+") or raw_clean.startswith("01") or "+88" in raw_clean:
+        return raw_clean
+    digits = re.sub(r'\D', '', raw_clean)
+    if len(digits) == 10 and not raw_clean.startswith("0"):
         return f"+1 ({digits[:3]}) {digits[3:6]}-{digits[6:]}"
     elif len(digits) == 11 and digits.startswith("1"):
         return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
-    elif len(digits) >= 10:
-        return raw.strip()
+    elif len(digits) >= 7:
+        return raw_clean
     return ""
 
 
@@ -242,10 +245,13 @@ def extract_from_html_content(raw_html: str, base_url: str):
         if is_valid_email(match):
             emails.add(match.strip().rstrip('.'))
 
-    # 6. Regex phone numbers from visible text
+    # 6. Regex phone numbers from visible text (North American and Bangladeshi/International)
     for m in PHONE_REGEX.finditer(visible_text):
         p_str = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
         phones.add(p_str)
+
+    for m in re.finditer(r'(?:\+?880\s?|0)(1[3-9]\d{2}[-\s]?\d{6})\b', visible_text):
+        phones.add(f"+880 {m.group(1)}")
 
     return emails, phones, socials
 

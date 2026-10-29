@@ -296,6 +296,9 @@ function setupSheetLayout(sheet, topic) {
   try {
     sheet.getRange(1, 1, Math.max(100, sheet.getMaxRows()), 11).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
   } catch (clipErr) {}
+
+  // Initialize dynamic conditional formatting rules
+  setupConditionalFormatting(sheet);
 }
 
 function styleKpiBadge(range, bgColor, fontColor, borderColor) {
@@ -310,8 +313,39 @@ function styleKpiBadge(range, bgColor, fontColor, borderColor) {
 }
 
 /**
+ * Sets up dynamic Conditional Formatting rules across the data range.
+ * Automatically paints any "NOT FOUND" cell in Alert Red (#D93025) with bold white text.
+ * As soon as any value is typed or pasted into the cell, the rule stops applying instantly,
+ * restoring the column's proper background and font color without any manual intervention!
+ */
+function setupConditionalFormatting(sheet) {
+  const maxRows = Math.max(1000, sheet.getMaxRows());
+  const dataRange = sheet.getRange(3, 1, maxRows - 2, 11);
+
+  const notFoundRule = SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo("NOT FOUND")
+    .setBackground("#D93025")
+    .setFontColor("#FFFFFF")
+    .setBold(true)
+    .setRanges([dataRange])
+    .build();
+
+  const rules = sheet.getConditionalFormatRules() || [];
+  const cleanRules = rules.filter(r => {
+    try {
+      return r.getCriteriaType() !== SpreadsheetApp.BooleanCriteria.TEXT_EQUAL_TO;
+    } catch (e) {
+      return true;
+    }
+  });
+  cleanRules.push(notFoundRule);
+  sheet.setConditionalFormatRules(cleanRules);
+}
+
+/**
  * Formats data rows with top-to-bottom color-coded columns per information type,
- * handles "NOT FOUND" cells with crisp red badges and white text, and strict text clipping.
+ * and sets up dynamic conditional formatting so "NOT FOUND" turns red, and typing/pasting
+ * data automatically adopts the column's theme.
  */
 function formatDataRows(sheet, startRow, rowCount) {
   const range = sheet.getRange(startRow, 1, rowCount, 11);
@@ -338,20 +372,79 @@ function formatDataRows(sheet, startRow, rowCount) {
   sheet.getRange(startRow, 10, rowCount, 1).setBackground("#FFFFFF").setFontColor("#3C4043").setHorizontalAlignment("left");
   sheet.getRange(startRow, 11, rowCount, 1).setBackground("#FEEAE6").setFontColor("#D93025").setFontWeight("bold").setHorizontalAlignment("center");
 
-  // Scan for "NOT FOUND" cells and apply high-contrast Red Badge styling
-  const values = range.getValues();
   for (let r = 0; r < rowCount; r++) {
-    const curRow = startRow + r;
-    sheet.setRowHeight(curRow, 26);
+    sheet.setRowHeight(startRow + r, 26);
+  }
 
-    for (let c = 0; c < 11; c++) {
+  // Ensure dynamic conditional formatting is active across the dataset
+  setupConditionalFormatting(sheet);
+}
+
+/**
+ * Auto-detects manual edits or pasted content in the sheet.
+ * If user edits or pastes a value into any data cell, automatically:
+ * 1. Checks if the value is "NOT FOUND" (formats as red alert badge).
+ * 2. If valid content is pasted/typed, automatically applies the column's specific color theme!
+ * 3. If an email is pasted in Column 3, updates Quality Score in Col 11 (+25)!
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const range = e.range;
+  const sheet = range.getSheet();
+  if (sheet.getName() !== "Lead Directory") return;
+  
+  const startRow = range.getRow();
+  if (startRow < 3) return; // Skip master bar & header
+  
+  const numRows = range.getNumRows();
+  const numCols = range.getNumCols();
+  const startCol = range.getColumn();
+  
+  // Style mapping for columns 1-11
+  const colStyles = {
+    1: { bg: "#F1F3F4", font: "#5F6368", bold: false, align: "center" },
+    2: { bg: "#FFFFFF", font: "#1E293B", bold: true, align: "left" },
+    3: { bg: "#E6F4EA", font: "#0D652D", bold: true, align: "left" },    // Email
+    4: { bg: "#FEF7E0", font: "#202124", bold: true, align: "center" },  // Phone
+    5: { bg: "#E8F0FE", font: "#1A73E8", bold: false, align: "left" },   // Website
+    6: { bg: "#F8F9FA", font: "#5F6368", bold: false, align: "left" },   // Category
+    7: { bg: "#FCE8E6", font: "#C5221F", bold: true, align: "center" },  // Rating
+    8: { bg: "#F3E8FD", font: "#6A1B9A", bold: false, align: "left" },   // Socials
+    9: { bg: "#E8F0FE", font: "#1A73E8", bold: true, align: "center" },  // Maps
+    10: { bg: "#FFFFFF", font: "#3C4043", bold: false, align: "left" },  // Address
+    11: { bg: "#FEEAE6", font: "#D93025", bold: true, align: "center" }  // Score
+  };
+  
+  const values = range.getValues();
+  for (let r = 0; r < numRows; r++) {
+    const curRow = startRow + r;
+    for (let c = 0; c < numCols; c++) {
+      const curCol = startCol + c;
+      if (curCol > 11) continue;
+      const cell = sheet.getRange(curRow, curCol);
       const val = String(values[r][c] || "").trim();
+      
       if (val === "NOT FOUND") {
-        const cell = sheet.getRange(curRow, c + 1);
-        cell.setBackground("#D93025");  // Google Alert Red
-        cell.setFontColor("#FFFFFF");   // Pure White text
+        cell.setBackground("#D93025");
+        cell.setFontColor("#FFFFFF");
         cell.setFontWeight("bold");
         cell.setHorizontalAlignment("center");
+      } else if (val !== "") {
+        const style = colStyles[curCol];
+        if (style) {
+          cell.setBackground(style.bg);
+          cell.setFontColor(style.font);
+          cell.setFontWeight(style.bold ? "bold" : "normal");
+          cell.setHorizontalAlignment(style.align);
+        }
+        // If user manually pasted an email into column 3, bump quality score in Col 11
+        if (curCol === 3 && val.includes("@")) {
+          const scoreCell = sheet.getRange(curRow, 11);
+          const curScore = Number(scoreCell.getValue()) || 50;
+          if (curScore < 75) {
+            scoreCell.setValue(Math.min(100, curScore + 25));
+          }
+        }
       }
     }
   }
